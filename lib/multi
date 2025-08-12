@@ -1,0 +1,1177 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:file_selector/file_selector.dart';
+import 'package:flutter/services.dart';
+
+import 'dart:io';
+import 'dart:math';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:rxdart/rxdart.dart';
+import 'package:just_waveform/just_waveform.dart';
+import 'package:intl/intl.dart';
+import 'package:flutter_speed_dial/flutter_speed_dial.dart';
+
+const platform = MethodChannel('com.example.audio_pad/audio');
+
+void main() {
+  runApp(MaterialApp(debugShowCheckedModeBanner: false, home: MyApp()));
+}
+
+class Session {
+  String name;
+  List<XFile> files = [];
+  List<bool> isMutedList = [];
+  List<double> panValues = [];
+  List<double> volumeValues = [];
+  List<String> selectedIcons = [];
+  Duration currentPosition = Duration.zero;
+  bool isPlaying = false;
+  Timer? playbackTimer;
+  Duration maxDuration = Duration(seconds: 30 * 8);
+
+  Session({this.name = "Untitled Session"});
+
+  void dispose() {
+    playbackTimer?.cancel();
+  }
+}
+
+class MyApp extends StatefulWidget {
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  Future<void> _switchSession(int index) async {
+    // Remova a chamada para stopAll()
+    setState(() {
+      currentSessionIndex = index;
+    });
+
+    // Se a nova sessão estava tocando, continue a reprodução
+    if (currentSession.isPlaying) {
+      await playSelected();
+    }
+  }
+
+  late String _currentTime;
+  late String _currentDate;
+  late final Timer _timera;
+
+  List<Session> sessions = [Session()];
+  int currentSessionIndex = 0;
+
+  Session get currentSession => sessions[currentSessionIndex];
+
+  final progressStream = BehaviorSubject<WaveformProgress>();
+  Duration maxDuration = Duration(seconds: 30 * 8);
+  Timer? _timer;
+  bool userIsSeeking = false;
+
+  List<String> iconOptions = [
+    'accordion.png',
+    'banjo.png',
+    'bass_drum.png',
+    'bassoon.png',
+    'berimbau.png',
+    'cello.png',
+    'clarinet.png',
+    'conga.png',
+    'guitar.png',
+    'harp.png',
+    'pan_flute.png',
+    'piano.png',
+    'sitar.png',
+    'snare_drum.png',
+    'tabla.png',
+    'trombone.png',
+    'trumpet.png',
+    'tuba.png',
+    'melodica.png',
+  ];
+
+  late PageController _pageController;
+  double _currentPage = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+    _updateDateTime();
+    _timera = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _updateDateTime(),
+    );
+    _pageController = PageController(viewportFraction: 0.5)
+      ..addListener(() {
+        setState(() {
+          _currentPage = _pageController.page!;
+        });
+      });
+  }
+
+  Future<void> _init() async {
+    try {
+      final audioBytes = await rootBundle.load('assets/eele.mp3');
+      final tempDir = await getTemporaryDirectory();
+      final audioFile = File(p.join(tempDir.path, 'a.mp3'));
+      await audioFile.writeAsBytes(audioBytes.buffer.asUint8List());
+      final waveFile = File(p.join(tempDir.path, 'a.wave'));
+
+      JustWaveform.extract(
+        audioInFile: audioFile,
+        waveOutFile: waveFile,
+      ).listen(progressStream.add, onError: progressStream.addError);
+    } catch (e) {
+      progressStream.addError(e);
+      debugPrint('Erro ao carregar o áudio: $e');
+    }
+  }
+
+  void _updateDateTime() {
+    final now = DateTime.now();
+    setState(() {
+      _currentTime = DateFormat('HH:mm:ss').format(now);
+      _currentDate = DateFormat('EEEE dd MMMM').format(now);
+    });
+  }
+
+  void _showIconSelectionDialog(int trackIndex) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.grey[900],
+      builder: (context) {
+        return Container(
+          padding: EdgeInsets.all(16),
+          height: 300,
+          child: Column(
+            children: [
+              Text('Selecione um ícone', style: TextStyle(color: Colors.white)),
+              SizedBox(height: 16),
+              Expanded(
+                child: GridView.builder(
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                  ),
+                  itemCount: iconOptions.length,
+                  itemBuilder: (context, index) {
+                    return GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          currentSession.selectedIcons[trackIndex] =
+                              iconOptions[index];
+                        });
+                        Navigator.pop(context);
+                      },
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.grey[800],
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color:
+                                currentSession.selectedIcons[trackIndex] ==
+                                    iconOptions[index]
+                                ? Colors.deepPurpleAccent
+                                : Colors.transparent,
+                          ),
+                        ),
+                        child: Center(
+                          child: Image.asset(
+                            'assets/icons/${iconOptions[index]}',
+                            width: 40,
+                            height: 40,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showSessionNameDialog(Session session) async {
+    final nameController = TextEditingController(text: session.name);
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          backgroundColor: Colors.grey[900],
+          title: Text('Nome da Sessão', style: TextStyle(color: Colors.white)),
+          content: TextField(
+            controller: nameController,
+            style: TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              hintText: 'Digite um nome',
+              hintStyle: TextStyle(color: Colors.white54),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Cancelar', style: TextStyle(color: Colors.white70)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, nameController.text),
+              child: Text(
+                'Salvar',
+                style: TextStyle(color: Colors.deepPurpleAccent),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (result != null && result.isNotEmpty) {
+      setState(() {
+        session.name = result;
+      });
+    }
+  }
+
+  void addNewSession() {
+    setState(() {
+      sessions.add(Session(name: "Sessão ${sessions.length + 1}"));
+      currentSessionIndex = sessions.length - 1;
+    });
+  }
+
+  void removeSession(int index) async {
+    if (sessions.length <= 1) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Remover Sessão'),
+        content: Text('Deseja remover "${sessions[index].name}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text('Remover'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      setState(() {
+        sessions.removeAt(index);
+        if (currentSessionIndex >= sessions.length) {
+          currentSessionIndex = sessions.length - 1;
+        }
+      });
+    }
+  }
+
+  Future<void> pickFiles() async {
+    final files = await openFiles(
+      acceptedTypeGroups: [
+        XTypeGroup(
+          label: 'audio',
+          extensions: ['mp3', 'wav', 'm4a', 'aac'],
+          mimeTypes: ['audio/mpeg', 'audio/wav', 'audio/x-m4a', 'audio/aac'],
+          uniformTypeIdentifiers: [
+            'public.mp3',
+            'public.wav',
+            'public.mpeg-4-audio',
+            'com.apple.m4a-audio',
+            'public.aac-audio',
+          ],
+        ),
+      ],
+    );
+
+    if (files.isEmpty) return;
+
+    await _showSessionNameDialog(currentSession);
+
+    setState(() {
+      currentSession.files = files;
+      currentSession.isMutedList = List.generate(
+        files.length,
+        (index) => false,
+      );
+      currentSession.panValues = List.generate(files.length, (index) => 0.0);
+      currentSession.volumeValues = List.generate(files.length, (index) => 0.7);
+      currentSession.selectedIcons = List.generate(
+        files.length,
+        (index) => 'guitar.png',
+      );
+      currentSession.currentPosition = Duration.zero;
+      currentSession.isPlaying = false;
+    });
+  }
+
+  Future<void> addFile() async {
+    final file = await openFile(
+      acceptedTypeGroups: [
+        XTypeGroup(
+          label: 'audio',
+          extensions: ['mp3', 'wav', 'm4a', 'aac'],
+          mimeTypes: ['audio/mpeg', 'audio/wav', 'audio/x-m4a', 'audio/aac'],
+          uniformTypeIdentifiers: [
+            'public.mp3',
+            'public.wav',
+            'public.mpeg-4-audio',
+            'com.apple.m4a-audio',
+            'public.aac-audio',
+          ],
+        ),
+      ],
+    );
+
+    if (file == null) return;
+
+    setState(() {
+      currentSession.files.add(file);
+      currentSession.isMutedList.add(false);
+      currentSession.panValues.add(0.0);
+      currentSession.volumeValues.add(0.7);
+      currentSession.selectedIcons.add('guitar.png');
+    });
+  }
+
+  Future<void> setPlayerPan(int index, double pan) async {
+    try {
+      await platform.invokeMethod('setPlayerPan', {'index': index, 'pan': pan});
+      setState(() {
+        currentSession.panValues[index] = pan;
+      });
+    } on PlatformException catch (e) {
+      print('Erro ao ajustar pan: ${e.message}');
+    }
+  }
+
+  Future<void> setPlayerVolume(int index, double volume) async {
+    try {
+      await platform.invokeMethod('setPlayerVolume', {
+        'index': index,
+        'volume': volume,
+      });
+      setState(() {
+        currentSession.volumeValues[index] = volume;
+        currentSession.isMutedList[index] = volume == 0.0;
+      });
+    } on PlatformException catch (e) {
+      print('Erro ao ajustar volume: ${e.message}');
+    }
+  }
+
+  Future<void> toggleMute(int index) async {
+    final newMuteState = !currentSession.isMutedList[index];
+    final newVolume = newMuteState ? 0.0 : currentSession.volumeValues[index];
+
+    try {
+      await platform.invokeMethod('mutePlayer', {
+        'index': index,
+        'mute': newMuteState,
+      });
+
+      setState(() {
+        currentSession.isMutedList[index] = newMuteState;
+        if (!newMuteState) {
+          currentSession.volumeValues[index] = newVolume;
+        }
+      });
+    } on PlatformException catch (e) {
+      print('Erro ao mutar: ${e.message}');
+    }
+  }
+
+  Future<void> playSelected() async {
+    if (currentSession.files.isEmpty) return;
+    if (currentSession.isPlaying) return;
+
+    final duration = await getAudioDuration(currentSession.files.first.path);
+    if (duration <= 0) return;
+
+    List<String> filePaths = currentSession.files.map((f) => f.path).toList();
+
+    try {
+      await platform.invokeMethod('playUploadedSounds', {
+        'filePaths': filePaths,
+        'startPosition': currentSession.currentPosition.inMilliseconds / 1000.0,
+      });
+
+      setState(() {
+        currentSession.isPlaying = true;
+        currentSession.maxDuration = Duration(
+          milliseconds: (duration * 1000).round(),
+        );
+      });
+
+      _startPlaybackTimer();
+    } catch (e) {
+      setState(() {
+        currentSession.isPlaying = false;
+      });
+    }
+  }
+
+  void _startPlaybackTimer() {
+    currentSession.playbackTimer?.cancel();
+    currentSession.playbackTimer = Timer.periodic(Duration(milliseconds: 100), (
+      timer,
+    ) {
+      if (!userIsSeeking) {
+        setState(() {
+          currentSession.currentPosition += Duration(milliseconds: 100);
+          if (currentSession.currentPosition >= currentSession.maxDuration) {
+            currentSession.playbackTimer?.cancel();
+            currentSession.isPlaying = false;
+          }
+        });
+      }
+    });
+  }
+
+  Future<void> clearAllFiles() async {
+    try {
+      await platform.invokeMethod('stopSounds');
+      _timer?.cancel();
+      setState(() {
+        currentSession.files.clear();
+        currentSession.isMutedList.clear();
+        currentSession.panValues.clear();
+        currentSession.volumeValues.clear();
+        currentSession.selectedIcons.clear();
+        currentSession.currentPosition = Duration.zero;
+        currentSession.isPlaying = false;
+      });
+    } on PlatformException catch (e) {
+      print('Erro ao limpar arquivos: ${e.message}');
+    }
+  }
+
+  Future<void> stopAll() async {
+    try {
+      await platform.invokeMethod('stopSounds');
+      currentSession.playbackTimer?.cancel();
+      setState(() {
+        currentSession.isPlaying = false;
+        // Remova a linha que reseta a posição
+        // currentSession.currentPosition = Duration.zero;
+      });
+    } on PlatformException catch (e) {
+      print('Erro ao parar sons: ${e.message}');
+    }
+  }
+
+  Future<void> seekTo(Duration position) async {
+    try {
+      await platform.invokeMethod('seekToPosition', {
+        'seconds': position.inSeconds.toDouble(),
+      });
+      setState(() {
+        currentSession.currentPosition = position;
+      });
+    } on PlatformException catch (e) {
+      print('Erro ao fazer seek: ${e.message}');
+    }
+  }
+
+  Future<void> pauseAll() async {
+    try {
+      await platform.invokeMethod('pauseSounds');
+      currentSession.playbackTimer?.cancel();
+      setState(() {
+        currentSession.isPlaying = false;
+        // A posição atual é mantida
+      });
+    } on PlatformException catch (e) {
+      print('Erro ao pausar sons: ${e.message}');
+    }
+  }
+
+  String formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return '$minutes:$seconds';
+  }
+
+  Future<double> getAudioDuration(String filePath) async {
+    try {
+      final duration = await platform.invokeMethod(
+        'getAudioDuration',
+        filePath,
+      );
+      return duration as double;
+    } on PlatformException catch (e) {
+      print('Erro ao obter duração: ${e.message}');
+      return 0.0;
+    }
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    _timera.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ThemeData.dark().copyWith(
+      scaffoldBackgroundColor: const Color(0xFF121212),
+      primaryColor: Colors.deepPurpleAccent,
+      colorScheme: const ColorScheme.dark().copyWith(
+        primary: Colors.deepPurpleAccent,
+        secondary: Colors.deepPurpleAccent,
+      ),
+    );
+
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: theme,
+      home: Scaffold(
+        floatingActionButton: SpeedDial(
+          backgroundColor: Colors.deepPurple,
+          icon: Icons.menu,
+          children: [
+            SpeedDialChild(
+              child: Icon(Icons.folder_open),
+              backgroundColor: Colors.deepPurple,
+              label: 'Selecionar arquivos',
+              onTap: pickFiles,
+            ),
+            SpeedDialChild(
+              child: Icon(Icons.add),
+              backgroundColor: Colors.green,
+              label: 'Adicionar arquivo',
+              onTap: addFile,
+            ),
+            if (currentSession.files.isNotEmpty)
+              SpeedDialChild(
+                child: Icon(Icons.delete),
+                backgroundColor: Colors.black54,
+                label: 'Limpar arquivos',
+                onTap: clearAllFiles,
+              ),
+            SpeedDialChild(
+              child: Icon(Icons.add_box),
+              backgroundColor: Colors.blue,
+              label: 'Nova Sessão',
+              onTap: addNewSession,
+            ),
+          ],
+        ),
+        appBar: AppBar(
+          title: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(_currentTime, style: TextStyle(fontSize: 12)),
+                  SizedBox(width: 20),
+                  Text(
+                    _currentDate,
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
+              SizedBox(height: 4),
+              Text(
+                currentSession.name,
+                style: TextStyle(color: Colors.deepPurpleAccent, fontSize: 14),
+              ),
+            ],
+          ),
+          bottom: PreferredSize(
+            preferredSize: Size.fromHeight(50),
+            child: Container(
+              height: 50,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                itemCount: sessions.length,
+                itemBuilder: (context, index) {
+                  return GestureDetector(
+                    onTap: () => _switchSession(index),
+                    onLongPress: () => removeSession(index),
+                    child: Container(
+                      width: 120,
+                      margin: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: currentSessionIndex == index
+                            ? Colors.deepPurple.withOpacity(0.3)
+                            : Colors.grey[800],
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: currentSessionIndex == index
+                              ? Colors.deepPurpleAccent
+                              : Colors.transparent,
+                        ),
+                      ),
+                      child: Center(
+                        child: Text(
+                          sessions[index].name,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: currentSessionIndex == index
+                                ? Colors.white
+                                : Colors.white70,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+        body: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+          child: Column(
+            children: [
+              if (currentSession.files.isNotEmpty) ...[
+                Container(
+                  height: 100,
+                  decoration: BoxDecoration(
+                    color: Color(0xFF282828),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: StreamBuilder<WaveformProgress>(
+                    stream: progressStream,
+                    builder: (context, snapshot) {
+                      if (snapshot.hasError) {
+                        return Center(child: Text('Error: ${snapshot.error}'));
+                      }
+                      final waveform = snapshot.data?.waveform;
+                      if (waveform == null) {
+                        return Center(child: Text('Loading waveform...'));
+                      }
+                      return AudioWaveformWidget(
+                        waveform: waveform,
+                        start: Duration.zero,
+                        duration: maxDuration,
+                        currentPosition: currentSession.currentPosition,
+                        onSeek: (duration) {
+                          userIsSeeking = true;
+                          seekTo(duration).then((_) {
+                            userIsSeeking = false;
+                          });
+                        },
+                      );
+                    },
+                  ),
+                ),
+                SizedBox(height: 16),
+              ],
+              Expanded(
+                child: currentSession.files.isEmpty
+                    ? Center(
+                        child: Text(
+                          'Nenhum arquivo selecionado',
+                          style: TextStyle(color: Colors.white70, fontSize: 18),
+                        ),
+                      )
+                    : PageView.builder(
+                        controller: _pageController,
+                        itemCount: currentSession.files.length,
+                        itemBuilder: (context, index) {
+                          final file = currentSession.files[index];
+                          final scale = (1 - (_currentPage - index).abs())
+                              .clamp(0.95, 1.1);
+
+                          return Transform.scale(
+                            scale: scale,
+                            child: AudioTrackCard(
+                              file: file,
+                              index: index,
+                              isMuted: currentSession.isMutedList[index],
+                              pan: currentSession.panValues[index],
+                              volume: currentSession.volumeValues[index],
+                              icon: currentSession.selectedIcons.length > index
+                                  ? currentSession.selectedIcons[index]
+                                  : 'guitar.png',
+                              onIconTap: () => _showIconSelectionDialog(index),
+                              onMuteToggle: () => toggleMute(index),
+                              onPanChange: (pan) => setPlayerPan(index, pan),
+                              onVolumeChange: (vol) =>
+                                  setPlayerVolume(index, vol),
+                              onRemove: () async {
+                                final confirm = await showDialog<bool>(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    title: Text('Remover arquivo'),
+                                    content: Text(
+                                      'Deseja remover "${file.name}"?',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(context, false),
+                                        child: Text('Cancelar'),
+                                      ),
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(context, true),
+                                        child: Text('Remover'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+
+                                if (confirm == true) {
+                                  try {
+                                    await platform.invokeMethod(
+                                      'removePlayer',
+                                      {'index': index},
+                                    );
+                                    setState(() {
+                                      currentSession.files.removeAt(index);
+                                      currentSession.isMutedList.removeAt(
+                                        index,
+                                      );
+                                      currentSession.panValues.removeAt(index);
+                                      currentSession.volumeValues.removeAt(
+                                        index,
+                                      );
+                                      currentSession.selectedIcons.removeAt(
+                                        index,
+                                      );
+                                    });
+                                  } on PlatformException catch (e) {
+                                    print(
+                                      'Erro ao remover player: ${e.message}',
+                                    );
+                                  }
+                                }
+                              },
+                            ),
+                          );
+                        },
+                      ),
+              ),
+              if (currentSession.files.isNotEmpty) ...[
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 8,
+                    thumbShape: RoundSliderThumbShape(enabledThumbRadius: 8),
+                  ),
+                  child: Slider(
+                    min: 0,
+                    max: maxDuration.inMilliseconds.toDouble(),
+                    value: currentSession.currentPosition.inMilliseconds
+                        .clamp(0, maxDuration.inMilliseconds)
+                        .toDouble(),
+                    onChanged: (value) {
+                      setState(() {
+                        userIsSeeking = true;
+                        currentSession.currentPosition = Duration(
+                          milliseconds: value.toInt(),
+                        );
+                      });
+                    },
+                    onChangeEnd: (value) {
+                      seekTo(Duration(milliseconds: value.toInt()));
+                      userIsSeeking = false;
+                    },
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(formatDuration(currentSession.currentPosition)),
+                      Text(formatDuration(maxDuration)),
+                    ],
+                  ),
+                ),
+                SizedBox(height: 20),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: currentSession.isPlaying
+                          ? pauseAll
+                          : playSelected,
+                      icon: Icon(
+                        currentSession.isPlaying
+                            ? Icons.pause
+                            : Icons.play_arrow,
+                      ),
+                      label: Text(currentSession.isPlaying ? 'PAUSE' : 'PLAY'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                      ),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: currentSession.isPlaying ? stopAll : null,
+                      icon: Icon(Icons.stop),
+                      label: Text('STOP'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: currentSession.isPlaying
+                            ? Colors.red
+                            : Colors.grey[700],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class AudioTrackCard extends StatelessWidget {
+  final XFile file;
+  final int index;
+  final bool isMuted;
+  final double pan;
+  final double volume;
+  final String icon;
+  final VoidCallback onIconTap;
+  final VoidCallback onMuteToggle;
+  final ValueChanged<double> onPanChange;
+  final ValueChanged<double> onVolumeChange;
+  final VoidCallback onRemove;
+
+  const AudioTrackCard({
+    Key? key,
+    required this.file,
+    required this.index,
+    required this.isMuted,
+    required this.pan,
+    required this.volume,
+    required this.icon,
+    required this.onIconTap,
+    required this.onMuteToggle,
+    required this.onPanChange,
+    required this.onVolumeChange,
+    required this.onRemove,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: EdgeInsets.symmetric(horizontal: 4, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.grey[850]!, Colors.grey[900]!],
+        ),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey[800]!),
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            top: 8,
+            left: 8,
+            child: GestureDetector(
+              onTap: onIconTap,
+              child: Container(
+                width: 24,
+                height: 24,
+                child: Image.asset('assets/icons/$icon', width: 20, height: 20),
+              ),
+            ),
+          ),
+          Column(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              SizedBox(height: 52),
+              Container(
+                padding: EdgeInsets.symmetric(vertical: 16, horizontal: 8),
+                decoration: BoxDecoration(
+                  border: Border(bottom: BorderSide(color: Colors.grey[800]!)),
+                ),
+                child: Text(
+                  file.name.replaceAll(RegExp(r'\.[^\.]+$'), ''),
+                  style: TextStyle(color: Colors.white, fontSize: 12),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: RotatedBox(
+                    quarterTurns: 3,
+                    child: Slider(
+                      value: volume,
+                      min: 0.0,
+                      max: 1.0,
+                      onChanged: onVolumeChange,
+                    ),
+                  ),
+                ),
+              ),
+              Container(
+                width: 40,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: Colors.grey[700]!),
+                ),
+                child: Center(
+                  child: Text(
+                    '${(volume * 100).round()}',
+                    style: TextStyle(color: Colors.greenAccent, fontSize: 12),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8.0,
+                  vertical: 4,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    GestureDetector(
+                      onTap: onMuteToggle,
+                      child: Container(
+                        padding: EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: isMuted
+                              ? Colors.red.withOpacity(0.2)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Icon(
+                          Icons.volume_off,
+                          size: 18,
+                          color: isMuted ? Colors.redAccent : Colors.white70,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          ElevatedButton(
+                            onPressed: () => onPanChange(-1.0),
+                            child: Text('L'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: pan == -1.0
+                                  ? Colors.deepPurpleAccent
+                                  : Colors.grey[800],
+                            ),
+                          ),
+                          ElevatedButton(
+                            onPressed: () => onPanChange(1.0),
+                            child: Text('R'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: pan == 1.0
+                                  ? Colors.deepPurpleAccent
+                                  : Colors.grey[800],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      pan < 0
+                          ? 'L${(pan * -100).round()}'
+                          : pan > 0
+                          ? 'R${(pan * 100).round()}'
+                          : 'C',
+                      style: TextStyle(color: Colors.white70, fontSize: 10),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class AudioWaveformWidget extends StatefulWidget {
+  final Color waveColor;
+  final double scale;
+  final double strokeWidth;
+  final double pixelsPerStep;
+  final Waveform waveform;
+  final Duration start;
+  final Duration duration;
+  final Duration currentPosition;
+  final ValueChanged<Duration> onSeek;
+
+  const AudioWaveformWidget({
+    Key? key,
+    required this.waveform,
+    required this.start,
+    required this.duration,
+    required this.currentPosition,
+    required this.onSeek,
+    this.waveColor = const Color.fromARGB(255, 0, 0, 0),
+    this.scale = 1,
+    this.strokeWidth = 5.0,
+    this.pixelsPerStep = 8.0,
+  }) : super(key: key);
+
+  @override
+  State<AudioWaveformWidget> createState() => _AudioWaveformState();
+}
+
+class _AudioWaveformState extends State<AudioWaveformWidget> {
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (details) {
+        final tapX = details.localPosition.dx;
+        final width = context.size!.width;
+        final tappedDuration = widget.duration * (tapX / width);
+        widget.onSeek(tappedDuration);
+      },
+      onHorizontalDragUpdate: (details) {
+        final dragX = details.localPosition.dx;
+        final width = context.size!.width;
+        final draggedDuration = widget.duration * (dragX / width);
+        widget.onSeek(draggedDuration);
+      },
+      child: SizedBox(
+        height: 200, // ou o valor que preferir
+        width: double.infinity,
+        child: CustomPaint(
+          painter: AudioWaveformPainter(
+            waveColor: widget.waveColor,
+            waveform: widget.waveform,
+            start: widget.start,
+            duration: widget.duration,
+            scale: widget.scale,
+            strokeWidth: widget.strokeWidth,
+            pixelsPerStep: widget.pixelsPerStep,
+            currentPosition: widget.currentPosition,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class AudioWaveformPainter extends CustomPainter {
+  final double scale;
+  final double strokeWidth;
+  final double pixelsPerStep;
+  final Paint wavePaint;
+  final Waveform waveform;
+  final Duration start;
+  final Duration duration;
+  final Duration currentPosition; // <- Campo adicionado
+
+  AudioWaveformPainter({
+    required this.waveform,
+    required this.start,
+    required this.duration,
+    required this.currentPosition, // <- Incluído corretamente aqui
+    Color waveColor = const Color.fromARGB(255, 0, 0, 0),
+    this.scale = 1.0,
+    this.strokeWidth = 5.0,
+    this.pixelsPerStep = 8.0,
+  }) : wavePaint = Paint()
+         ..style = PaintingStyle.stroke
+         ..strokeWidth = strokeWidth
+         ..strokeCap = StrokeCap.round
+         ..color = waveColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final width = size.width;
+    final height = size.height;
+
+    // Fundo preto elegante
+    final backgroundPaint = Paint()..color = const Color(0xFF121212);
+    canvas.drawRect(Rect.fromLTWH(0, 0, width, height), backgroundPaint);
+
+    // Cursor de posição atual (linha branca)
+    final positionFraction =
+        currentPosition.inMilliseconds / duration.inMilliseconds;
+    final cursorX = positionFraction * width;
+
+    final cursorPaint = Paint()
+      ..color = Colors.white
+      ..strokeWidth = 2;
+
+    canvas.drawLine(Offset(cursorX, 0), Offset(cursorX, height), cursorPaint);
+
+    // Gradiente no waveform
+    final gradient = LinearGradient(
+      colors: [
+        const Color.fromARGB(255, 83, 83, 83),
+        const Color.fromARGB(255, 59, 59, 59),
+      ],
+    ).createShader(Rect.fromLTWH(0, 0, width, height));
+
+    final wavePaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round
+      ..shader = gradient;
+
+    final waveformPixelsPerWindow = waveform.positionToPixel(duration).toInt();
+    final waveformPixelsPerDevicePixel = waveformPixelsPerWindow / width;
+    final waveformPixelsPerStep = waveformPixelsPerDevicePixel * pixelsPerStep;
+    final sampleOffset = waveform.positionToPixel(start);
+    final sampleStart = -sampleOffset % waveformPixelsPerStep;
+
+    for (
+      var i = sampleStart.toDouble();
+      i <= waveformPixelsPerWindow + 1.0;
+      i += waveformPixelsPerStep
+    ) {
+      final sampleIdx = (sampleOffset + i).toInt();
+      final x = i / waveformPixelsPerDevicePixel;
+      final minY = normalise(waveform.getPixelMin(sampleIdx), height);
+      final maxY = normalise(waveform.getPixelMax(sampleIdx), height);
+      canvas.drawLine(
+        Offset(x + strokeWidth / 2, max(strokeWidth * 0.75, minY)),
+        Offset(x + strokeWidth / 2, min(height - strokeWidth * 0.75, maxY)),
+        wavePaint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant AudioWaveformPainter oldDelegate) {
+    return oldDelegate.currentPosition != currentPosition ||
+        oldDelegate.duration != duration ||
+        oldDelegate.start != start;
+  }
+
+  double normalise(int s, double height) {
+    if (waveform.flags == 0) {
+      final y = 32768 + (scale * s).clamp(-32768.0, 32767.0).toDouble();
+      return height - 1 - y * height / 65536;
+    } else {
+      final y = 128 + (scale * s).clamp(-128.0, 127.0).toDouble();
+      return height - 1 - y * height / 256;
+    }
+  }
+}

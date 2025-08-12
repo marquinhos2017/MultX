@@ -1,0 +1,174 @@
+import AVFoundation
+import Flutter
+
+class AudioEngineHandler {
+    var engine = AVAudioEngine()
+    var players: [AVAudioPlayerNode] = []
+    var audioFiles: [AVAudioFile] = []
+    var durationInSeconds: Double = 0
+
+    init() {
+        configureAudioSession()
+    }
+
+    private func configureAudioSession() {
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default)
+            try session.setActive(true)
+        } catch {
+            print("AVAudioSession error: \(error.localizedDescription)")
+        }
+    }
+
+    func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+        switch call.method {
+        case "playUploadedSounds":
+            guard let args = call.arguments as? [String: Any],
+                  let filePaths = args["filePaths"] as? [String] else {
+                result(FlutterError(code: "INVALID_ARGUMENTS", message: "filePaths missing", details: nil))
+                return
+            }
+            playSounds(paths: filePaths, result: result)
+        case "stopSounds":
+            stop()
+            result(nil)
+        case "setPlayerPan":
+            guard let args = call.arguments as? [String: Any],
+                  let index = args["index"] as? Int,
+                  let pan = args["pan"] as? Double else {
+                result(FlutterError(code: "INVALID_ARGUMENTS", message: "index or pan missing", details: nil))
+                return
+            }
+            setPan(index: index, pan: pan)
+            result(nil)
+        case "setPlayerVolume":
+            guard let args = call.arguments as? [String: Any],
+                  let index = args["index"] as? Int,
+                  let volume = args["volume"] as? Double else {
+                result(FlutterError(code: "INVALID_ARGUMENTS", message: "index or volume missing", details: nil))
+                return
+            }
+            setVolume(index: index, volume: Float(volume))
+            result(nil)
+        case "mutePlayer":
+            guard let args = call.arguments as? [String: Any],
+                  let index = args["index"] as? Int,
+                  let mute = args["mute"] as? Bool else {
+                result(FlutterError(code: "INVALID_ARGUMENTS", message: "index or mute missing", details: nil))
+                return
+            }
+            mutePlayer(index: index, mute: mute)
+            result(nil)
+        case "seekToPosition":
+            guard let args = call.arguments as? [String: Any],
+                  let seconds = args["seconds"] as? Double else {
+                result(FlutterError(code: "INVALID_ARGUMENTS", message: "seconds missing", details: nil))
+                return
+            }
+            seek(to: seconds)
+            result(nil)
+        case "getAudioDuration":
+            guard let path = call.arguments as? String else {
+                result(FlutterError(code: "INVALID_ARGUMENTS", message: "path missing", details: nil))
+                return
+            }
+            let duration = getDuration(for: path)
+            result(duration)
+        default:
+            result(FlutterMethodNotImplemented)
+        }
+    }
+
+    func playSounds(paths: [String], result: FlutterResult) {
+        stop()
+
+        engine = AVAudioEngine()
+        players = []
+        audioFiles = []
+
+        for path in paths {
+            let url = URL(fileURLWithPath: path)
+            do {
+                let file = try AVAudioFile(forReading: url)
+                let player = AVAudioPlayerNode()
+                engine.attach(player)
+                engine.connect(player, to: engine.mainMixerNode, format: file.processingFormat)
+
+                players.append(player)
+                audioFiles.append(file)
+            } catch {
+                result(FlutterError(code: "AUDIO_ERROR", message: "Failed to load audio", details: error.localizedDescription))
+                return
+            }
+        }
+
+        for (i, player) in players.enumerated() {
+            let file = audioFiles[i]
+            player.scheduleFile(file, at: nil, completionHandler: nil)
+        }
+
+        do {
+            try engine.start()
+            for player in players {
+                player.play()
+            }
+            durationInSeconds = audioFiles.map { Double($0.length) / $0.fileFormat.sampleRate }.max() ?? 0
+            result(nil)
+        } catch {
+            result(FlutterError(code: "ENGINE_ERROR", message: "Failed to start engine", details: error.localizedDescription))
+        }
+    }
+
+    func stop() {
+        for player in players {
+            player.stop()
+        }
+        engine.stop()
+    }
+
+    func setPan(index: Int, pan: Double) {
+        guard index < players.count else { return }
+        players[index].pan = Float(pan)
+    }
+
+    func setVolume(index: Int, volume: Float) {
+        guard index < players.count else { return }
+        players[index].volume = volume
+    }
+
+    func mutePlayer(index: Int, mute: Bool) {
+        guard index < players.count else { return }
+        players[index].volume = mute ? 0 : 1
+    }
+
+    func seek(to seconds: Double) {
+        stop()
+
+        for (i, player) in players.enumerated() {
+            let file = audioFiles[i]
+            let frameOffset = AVAudioFramePosition(seconds * file.fileFormat.sampleRate)
+            let frameCount = AVAudioFrameCount(file.length - frameOffset)
+            player.scheduleSegment(file, startingFrame: frameOffset, frameCount: frameCount, at: nil, completionHandler: nil)
+        }
+
+        do {
+            try engine.start()
+            for player in players {
+                player.play()
+            }
+        } catch {
+            print("Error starting engine after seek: \(error.localizedDescription)")
+        }
+    }
+
+    func getDuration(for path: String) -> Double {
+        let url = URL(fileURLWithPath: path)
+        do {
+            let file = try AVAudioFile(forReading: url)
+            return Double(file.length) / file.fileFormat.sampleRate
+        } catch {
+            return 0
+        }
+    }
+}
