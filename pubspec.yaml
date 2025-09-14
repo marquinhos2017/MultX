@@ -71,6 +71,7 @@ flutter:
 
   assets:
     - assets/
+    - assets/teu.mp3
     - assets/logo.png
     - assets/logoblack.png
     - assets/logobranco.png

@@ -7,7 +7,7 @@ class AudioEngineHandler {
     var audioFiles: [AVAudioFile] = []
     var durationInSeconds: Double = 0
     var volumes: [Float] = []
-var pans: [Float] = []
+    var pans: [Float] = []
 
     init() {
         configureAudioSession()
@@ -25,57 +25,49 @@ var pans: [Float] = []
 
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
-            case "pauseSounds":
-    pause()
-    result(nil)
-
-// Adicione este método na classe AudioEngineHandler
-func pause() {
-    for player in players {
-        player.pause()
-    }
-}
-
-
-
-            case "removePlayer":
-    guard let args = call.arguments as? [String: Any],
-          let index = args["index"] as? Int else {
-        result(FlutterError(code: "INVALID_ARGUMENTS", message: "index missing", details: nil))
-        return
-    }
-    removePlayer(index: index)
-    result(nil)
-       case "playUploadedSounds":
-    guard let args = call.arguments as? [String: Any],
-          let filePaths = args["filePaths"] as? [String],
-          let pans = args["pans"] as? [Double],
-          let volumes = args["volumes"] as? [Double] else {
-        result(FlutterError(code: "INVALID_ARGUMENTS", message: "filePaths, pans ou volumes missing", details: nil))
-        return
-    }
-    playSounds(paths: filePaths, pansFromFlutter: pans, volumesFromFlutter: volumes, result: result)
-
+        case "pauseSounds":
+            pause()
+            result(nil)
+            
         case "stopSounds":
             stop()
             result(nil)
-        case "setPlayerPan":
+            
+        case "resumeSounds":
+            resume()
+            result(nil)
+            
+        case "removePlayer":
             guard let args = call.arguments as? [String: Any],
-                  let index = args["index"] as? Int,
-                  let pan = args["pan"] as? Double else {
-                result(FlutterError(code: "INVALID_ARGUMENTS", message: "index or pan missing", details: nil))
+                  let index = args["index"] as? Int else {
+                result(FlutterError(code: "INVALID_ARGUMENTS", message: "index missing", details: nil))
                 return
             }
-            setPan(index: index, pan: pan)
+            removePlayer(index: index)
             result(nil)
-
-            case "setAudioOutput":
-    guard let output = call.arguments as? String else {
-        result(FlutterError(code: "INVALID_ARGUMENTS", message: "output missing", details: nil))
+            
+        case "playUploadedSounds":
+            guard let args = call.arguments as? [String: Any],
+                  let filePaths = args["filePaths"] as? [String],
+                  let pans = args["pans"] as? [Double],
+                  let volumes = args["volumes"] as? [Double],
+                  let startPosition = args["startPosition"] as? Double else {
+                result(FlutterError(code: "INVALID_ARGUMENTS", message: "Missing arguments", details: nil))
+                return
+            }
+            playSounds(paths: filePaths, pansFromFlutter: pans, volumesFromFlutter: volumes, startPosition: startPosition, result: result)
+            
+        case "setPlayerPan":
+    guard let args = call.arguments as? [String: Any],
+          let index = args["index"] as? Int,
+          let pan = args["pan"] as? Double else {
+        result(FlutterError(code: "INVALID_ARGUMENTS", message: "index or pan missing", details: nil))
         return
     }
-    setAudioOutput(output: output)
+    setPan(index: index, pan: pan)
     result(nil)
+
+
         case "setPlayerVolume":
             guard let args = call.arguments as? [String: Any],
                   let index = args["index"] as? Int,
@@ -83,8 +75,9 @@ func pause() {
                 result(FlutterError(code: "INVALID_ARGUMENTS", message: "index or volume missing", details: nil))
                 return
             }
-            setVolume(index: index, volume: Float(volume))
+            setVolume(index: index, volume: volume)
             result(nil)
+            
         case "mutePlayer":
             guard let args = call.arguments as? [String: Any],
                   let index = args["index"] as? Int,
@@ -94,6 +87,7 @@ func pause() {
             }
             mutePlayer(index: index, mute: mute)
             result(nil)
+            
         case "seekToPosition":
             guard let args = call.arguments as? [String: Any],
                   let seconds = args["seconds"] as? Double else {
@@ -102,259 +96,185 @@ func pause() {
             }
             seek(to: seconds)
             result(nil)
+            
         case "getAudioDuration":
             guard let path = call.arguments as? String else {
                 result(FlutterError(code: "INVALID_ARGUMENTS", message: "path missing", details: nil))
                 return
             }
-            let duration = getDuration(for: path)
-            result(duration)
+            result(getDuration(for: path))
+            
         default:
             result(FlutterMethodNotImplemented)
         }
     }
 
-func playSounds(paths: [String], pansFromFlutter: [Double], volumesFromFlutter: [Double], result: FlutterResult) {
-    stop()
-    engine = AVAudioEngine()
-    players = []
-    audioFiles = []
-    volumes = volumesFromFlutter.map { Float($0) }
-    pans = pansFromFlutter.map { Float($0) }
-    
-    print("🔄 Iniciando carregamento dos arquivos...")
+    // MARK: - Audio Playback Methods
 
-   for (index, path) in paths.enumerated() {
-    let url = URL(fileURLWithPath: path)
-    do {
-        let file = try AVAudioFile(forReading: url)
-        let player = AVAudioPlayerNode()
-
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: file.processingFormat)
-
-        players.append(player)
-        audioFiles.append(file)
-    } catch {
-        result(FlutterError(code: "AUDIO_ERROR", message: "Failed to load audio", details: error.localizedDescription))
-        return
+    func playSounds(paths: [String], pansFromFlutter: [Double], volumesFromFlutter: [Double], startPosition: Double, result: FlutterResult) {
+        stop()
+        engine = AVAudioEngine()
+        players = []
+        audioFiles = []
+        self.volumes = volumesFromFlutter.map { Float($0) }
+        self.pans = pansFromFlutter.map { Float($0) }
+        
+        print("🔄 Carregando arquivos a partir de \(startPosition) segundos...")
+        
+        for path in paths {
+            let url = URL(fileURLWithPath: path)
+            do {
+                let file = try AVAudioFile(forReading: url)
+                let player = AVAudioPlayerNode()
+                engine.attach(player)
+                engine.connect(player, to: engine.mainMixerNode, format: file.processingFormat)
+                players.append(player)
+                audioFiles.append(file)
+            } catch {
+                result(FlutterError(code: "AUDIO_ERROR", message: "Failed to load audio", details: error.localizedDescription))
+                return
+            }
+        }
+        
+        do {
+            try engine.start()
+            guard let renderTime = engine.outputNode.lastRenderTime else {
+                result(FlutterError(code: "TIME_ERROR", message: "Failed to get render time", details: nil))
+                return
+            }
+            let hostTime = renderTime.hostTime + UInt64(0.02 * Double(NSEC_PER_SEC))
+            let startTime = AVAudioTime(hostTime: hostTime)
+            
+            for (i, player) in players.enumerated() {
+                let file = audioFiles[i]
+                let sampleRate = file.fileFormat.sampleRate
+                let frameOffset = AVAudioFramePosition(startPosition * sampleRate)
+                let remainingFrames = AVAudioFrameCount(max(0, file.length - frameOffset))
+                
+                if frameOffset < file.length {
+                    player.pan = i < pans.count ? pans[i] : 0.0
+                    player.volume = i < volumes.count ? volumes[i] : 1.0
+                    player.scheduleSegment(file, startingFrame: frameOffset, frameCount: remainingFrames, at: startTime, completionHandler: nil)
+                }
+            }
+            
+            players.forEach { $0.play(at: startTime) }
+            durationInSeconds = audioFiles.map { Double($0.length) / $0.fileFormat.sampleRate }.max() ?? 0
+            result(nil)
+            
+        } catch {
+            result(FlutterError(code: "ENGINE_ERROR", message: "Failed to start engine", details: error.localizedDescription))
+        }
     }
-}
 
-do {
-    try engine.start()
-
-    guard let renderTime = engine.outputNode.lastRenderTime else {
-        result(FlutterError(code: "TIME_ERROR", message: "Failed to get render time", details: nil))
-        return
+    func resume() {
+        if !engine.isRunning {
+            do { try engine.start() } catch { print("❌ Erro ao reiniciar engine: \(error.localizedDescription)"); return }
+        }
+        for player in players where !player.isPlaying { player.play() }
     }
-
-    let hostTime = renderTime.hostTime + UInt64(0.02 * Double(NSEC_PER_SEC))
-    let startTime = AVAudioTime(hostTime: hostTime)
-
-    for (i, player) in players.enumerated() {
-        let file = audioFiles[i]
-
-        // Aplicar pan/volume somente aqui
-        player.pan = i < pans.count ? pans[i] : 0.0
-        player.volume = i < volumes.count ? volumes[i] : 1.0
-
-        player.scheduleFile(file, at: startTime)
-    }
-
-    for (i, player) in players.enumerated() {
-        player.play(at: startTime)
-    }
-
-    durationInSeconds = audioFiles.map { Double($0.length) / $0.fileFormat.sampleRate }.max() ?? 0
-    result(nil)
-
-} catch {
-    result(FlutterError(code: "ENGINE_ERROR", message: "Failed to start engine", details: error.localizedDescription))
-}
-
-}
-
-
 
     func stop() {
-        for player in players {
-            player.stop()
-        }
+        players.forEach { $0.stop() }
         engine.stop()
+        players.removeAll()
+        audioFiles.removeAll()
+        volumes.removeAll()
+        pans.removeAll()
     }
 
-    func setVolume(index: Int, volume: Float) {
-    guard index < players.count else { return }
-    players[index].volume = volume
-    if index < volumes.count {
-        volumes[index] = volume
+    func pause() {
+        for player in players where player.isPlaying { player.pause() }
     }
-}
-func setAudioOutput(output: String) {
-    let session = AVAudioSession.sharedInstance()
+
     
-    do {
-        switch output {
-        case "headphones":
-            try session.overrideOutputAudioPort(.none) // usa rota padrão, fones se conectados
-            
-        case "speaker":
-            try session.overrideOutputAudioPort(.speaker) // força alto-falante
-            
-        case "bluetooth":
-            // Não há método público para forçar bluetooth,
-            // apenas permite a saída padrão que usa bluetooth se conectado
-            try session.overrideOutputAudioPort(.none)
-            
-        default:
-            try session.overrideOutputAudioPort(.none)
-        }
-    } catch {
-        print("Erro ao configurar saída de áudio: \(error.localizedDescription)")
-    }
-}
 
-func setPan(index: Int, pan: Double) {
-    guard index < players.count else { return }
-    players[index].pan = Float(pan)
-    if index < pans.count {
-        pans[index] = Float(pan)
+    func setVolume(index: Int, volume: Double) {
+        guard index < players.count else { return }
+        let floatVolume = Float(volume)
+        players[index].volume = floatVolume
+        if index < volumes.count { volumes[index] = floatVolume }
     }
-}
 
+    func setPan(index: Int, pan: Double) {
+        guard index < players.count else { return }
+        let floatPan = Float(pan)
+        players[index].pan = floatPan
+        if index < pans.count { pans[index] = floatPan }
+    }
 
     func mutePlayer(index: Int, mute: Bool) {
         guard index < players.count else { return }
         players[index].volume = mute ? 0 : 1
     }
-func seek(to seconds: Double) {
-    print("⏪ Seeking to \(seconds) segundos")
 
-    guard !players.isEmpty, !audioFiles.isEmpty else {
-        print("⚠️ Nenhum player ou arquivo disponível para seek")
-        return
-    }
-
-    // Parar todos os players
-    for player in players {
-        player.stop()
-    }
-
-    guard let renderTime = engine.outputNode.lastRenderTime else {
-        print("❌ Falha ao obter renderTime no seek")
-        return
-    }
-
-    // Tempo comum de início
-    let hostTime = renderTime.hostTime + UInt64(0.02 * Double(NSEC_PER_SEC))
-    let startTime = AVAudioTime(hostTime: hostTime)
-
-    print("⏱️ Agendando players para hostTime: \(hostTime)")
-
-    for (i, player) in players.enumerated() {
-        guard i < audioFiles.count else { continue }
-        let file = audioFiles[i]
-        let sampleRate = file.fileFormat.sampleRate
-        let frameOffset = AVAudioFramePosition(seconds * sampleRate)
-        let remainingFrames = AVAudioFrameCount(max(0, file.length - frameOffset))
-
-        guard frameOffset < file.length else {
-            print("⚠️ Posição de seek fora do limite no player \(i)")
-            continue
+    func seek(to seconds: Double) {
+        guard !players.isEmpty, !audioFiles.isEmpty else { return }
+        let wasPlaying = players.first?.isPlaying ?? false
+        players.forEach { $0.stop() }
+        
+        guard let renderTime = engine.outputNode.lastRenderTime else { return }
+        let hostTime = renderTime.hostTime + UInt64(0.02 * Double(NSEC_PER_SEC))
+        let startTime = AVAudioTime(hostTime: hostTime)
+        
+        for (i, player) in players.enumerated() {
+            guard i < audioFiles.count else { continue }
+            let file = audioFiles[i]
+            let frameOffset = AVAudioFramePosition(seconds * file.fileFormat.sampleRate)
+            let remainingFrames = AVAudioFrameCount(max(0, file.length - frameOffset))
+            guard frameOffset < file.length else { continue }
+            player.scheduleSegment(file, startingFrame: frameOffset, frameCount: remainingFrames, at: startTime, completionHandler: nil)
         }
-
-        player.scheduleSegment(
-            file,
-            startingFrame: frameOffset,
-            frameCount: remainingFrames,
-            at: startTime,
-            completionHandler: {
-                print("🏁 Player \(i) terminou após seek.")
-            }
-        )
-        print("🎯 Player \(i) agendado com offset: \(frameOffset), frames restantes: \(remainingFrames)")
+        
+        if wasPlaying { players.forEach { $0.play(at: startTime) } }
     }
 
-    for (i, player) in players.enumerated() {
-        player.play(at: startTime)
-        print("▶️ Player \(i) play() chamado com sincronização.")
+   func getDuration(for path: String) -> Double {
+    let url = URL(fileURLWithPath: path)
+    do {
+        let file = try AVAudioFile(forReading: url)
+        return Double(file.length) / file.fileFormat.sampleRate
+    } catch {
+        return 0
     }
 }
 
 
-
-
-
-
-    func getDuration(for path: String) -> Double {
-        let url = URL(fileURLWithPath: path)
-        do {
-            let file = try AVAudioFile(forReading: url)
-            return Double(file.length) / file.fileFormat.sampleRate
-        } catch {
-            return 0
-        }
-    }
-
-func removePlayer(index: Int) {
-    // Verifica se o índice é válido
-    guard players.indices.contains(index) else {
-        print("❌ Índice inválido para remoção: \(index)")
-        return
-    }
-    
-    print("🗑️ Removendo player no índice \(index)")
-    
-    // Pausa o player específico
-    let playerToRemove = players[index]
-    playerToRemove.stop()
-    engine.detach(playerToRemove)
-    
-    // Remove das listas
-    players.remove(at: index)
-    audioFiles.remove(at: index)
-    
-    // Se não houver mais players, para o engine
-    if players.isEmpty {
-        engine.stop()
-        print("🛑 Todos os players removidos - engine parado")
-        return
-    }
-    
-    // Reconecta todos os players restantes
-    do {
-        // Para cada player restante
+    func removePlayer(index: Int) {
+        guard players.indices.contains(index) else { return }
+        let playerToRemove = players[index]
+        playerToRemove.stop()
+        engine.detach(playerToRemove)
+        players.remove(at: index)
+        audioFiles.remove(at: index)
+        
+        if players.isEmpty { engine.stop(); return }
+        
         for (i, player) in players.enumerated() {
             let file = audioFiles[i]
-            
-            // Obtém a posição atual de reprodução
-            if let nodeTime = player.lastRenderTime,
-               let playerTime = player.playerTime(forNodeTime: nodeTime) {
+            if let nodeTime = player.lastRenderTime, let playerTime = player.playerTime(forNodeTime: nodeTime) {
                 let currentPosition = Double(playerTime.sampleTime) / playerTime.sampleRate
-                
-                print("🔄 Reagendando player \(i) na posição: \(currentPosition) segundos")
-                
                 let frameOffset = AVAudioFramePosition(currentPosition * file.fileFormat.sampleRate)
                 let remainingFrames = AVAudioFrameCount(file.length - frameOffset)
-                
                 if frameOffset < file.length {
-                    player.scheduleSegment(file,
-                                        startingFrame: frameOffset,
-                                        frameCount: remainingFrames,
-                                        at: nil,
-                                        completionHandler: nil)
+                    player.scheduleSegment(file, startingFrame: frameOffset, frameCount: remainingFrames, at: nil, completionHandler: nil)
                 }
             }
         }
-        
-        // Reinicia a reprodução
-        for player in players {
-            player.play()
-        }
-        
-        print("✅ Players restantes reconectados e reprodução continuada")
-    } catch {
-        print("❌ Erro ao reconectar players: \(error.localizedDescription)")
+        players.forEach { $0.play() }
     }
-}}
+
+    func setAudioOutput(output: String) {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            switch output {
+            case "headphones": try session.overrideOutputAudioPort(.none)
+            case "speaker": try session.overrideOutputAudioPort(.speaker)
+            case "bluetooth": try session.overrideOutputAudioPort(.none)
+            default: try session.overrideOutputAudioPort(.none)
+            }
+        } catch {
+            print("Erro ao configurar saída de áudio: \(error.localizedDescription)")
+        }
+    }
+}

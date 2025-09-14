@@ -8,18 +8,12 @@ import 'package:flutter/services.dart';
 import 'dart:io';
 import 'dart:math';
 
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:rxdart/rxdart.dart';
 import 'package:just_waveform/just_waveform.dart';
 import 'package:intl/intl.dart';
-import 'package:flutter_speed_dial/flutter_speed_dial.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 class SplashScreen extends StatefulWidget {
   @override
@@ -174,152 +168,6 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-  Future<void> _exportPreset() async {
-    if (_selectedPresetIndex == null || savedPresets.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Nenhum preset selecionado para exportar')),
-      );
-      return;
-    }
-
-    // Verificar permissão de armazenamento
-    final status = await Permission.storage.request();
-    if (!status.isGranted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Permissão de armazenamento negada')),
-      );
-      return;
-    }
-
-    try {
-      final preset = savedPresets[_selectedPresetIndex!];
-      final presetId = preset['id'];
-      final fullPreset = await _loadFullPreset(presetId);
-
-      if (fullPreset == null) {
-        throw Exception('Preset não encontrado');
-      }
-
-      // Criar um objeto de exportação que inclui todos os dados necessários
-      final exportData = {
-        'version': 1,
-        'preset': fullPreset,
-        'timestamp': DateTime.now().toIso8601String(),
-      };
-
-      // Converter para JSON
-      final jsonData = jsonEncode(exportData);
-
-      // Obter diretório de downloads
-      final directory = await getDownloadsDirectory();
-      if (directory == null) {
-        throw Exception('Não foi possível acessar a pasta de downloads');
-      }
-
-      // Criar nome do arquivo
-      final fileName =
-          '${fullPreset['name'].replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_')}_${DateTime.now().millisecondsSinceEpoch}.mtrack';
-      final filePath = '${directory.path}/$fileName';
-
-      // Escrever o arquivo
-      final file = File(filePath);
-      await file.writeAsString(jsonData);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Preset exportado com sucesso para: $filePath'),
-          duration: Duration(seconds: 3),
-        ),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Erro ao exportar preset: $e')));
-    }
-  }
-
-  Future<void> _importPreset() async {
-    // Verificar permissão de armazenamento
-    final status = await Permission.storage.request();
-    if (!status.isGranted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Permissão de armazenamento negada')),
-      );
-      return;
-    }
-
-    try {
-      // Abrir seletor de arquivos
-      final file = await openFile(
-        acceptedTypeGroups: [
-          XTypeGroup(
-            label: 'Multitrack Presets',
-            extensions: ['mtrack'],
-            uniformTypeIdentifiers: ['com.example.audiopad.preset'],
-          ),
-        ],
-      );
-
-      if (file == null) return;
-
-      // Ler o arquivo
-      final content = await File(file.path).readAsString();
-      final data = jsonDecode(content) as Map<String, dynamic>;
-
-      // Verificar versão
-      if (data['version'] != 1) {
-        throw Exception('Formato de arquivo não suportado');
-      }
-
-      final presetData = data['preset'] as Map<String, dynamic>;
-
-      // Verificar se os arquivos existem (para presets externos)
-      final List<String> validFiles = [];
-      for (final path in presetData['files'] ?? []) {
-        if (await File(path).exists()) {
-          validFiles.add(path);
-        } else {
-          debugPrint('Arquivo não encontrado: $path');
-        }
-      }
-
-      if (validFiles.isEmpty) {
-        throw Exception('Nenhum arquivo de áudio válido encontrado no preset');
-      }
-
-      // Criar novo preset com os dados importados
-      final prefs = await SharedPreferences.getInstance();
-      final presets = prefs.getStringList(_presetsKey) ?? [];
-
-      final newPreset = {
-        'id': _generateUniqueId(),
-        'name': presetData['name'] ?? 'Preset Importado',
-        'files': validFiles,
-        'panValues': List<double>.from(presetData['panValues'] ?? []),
-        'volumeValues': List<double>.from(presetData['volumeValues'] ?? []),
-        'isMutedList': List<bool>.from(presetData['isMutedList'] ?? []),
-        'selectedIcons': List<String>.from(presetData['selectedIcons'] ?? []),
-        'timestamp': DateTime.now().toIso8601String(),
-      };
-
-      presets.add(jsonEncode(newPreset));
-      await prefs.setStringList(_presetsKey, presets);
-      await _loadSavedPresets();
-
-      // Carregar o preset importado
-      final newIndex = savedPresets.length - 1;
-      await loadPreset(newIndex, context);
-
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Preset importado com sucesso!')));
-    } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Erro ao importar preset: $e')));
-    }
-  }
-
   // Adicione no início da classe
   final _presetsKey = 'audio_pad_presets';
   List<Map<String, dynamic>> savedPresets = [];
@@ -354,6 +202,199 @@ class _MyAppState extends State<MyApp> {
           debugPrint('Erro ao deletar arquivo ${file.path}: $e');
         }
       }
+    }
+  }
+
+  Future<int?> saveCurrentPreset() async {
+    final prefs = await SharedPreferences.getInstance();
+    final presets = prefs.getStringList(_presetsKey) ?? [];
+
+    try {
+      // === 1) Atualizar preset existente ===
+      if (_selectedPresetIndex != null &&
+          _selectedPresetIndex! < presets.length) {
+        final existingJson = presets[_selectedPresetIndex!];
+        final existingPreset = jsonDecode(existingJson) as Map<String, dynamic>;
+        final existingFiles = List<String>.from(existingPreset['files'] ?? []);
+
+        final List<String> newInternalPaths = [];
+
+        // Copia apenas arquivos novos
+        for (final file in selectedFiles) {
+          final baseName = p.basename(file.path);
+          final alreadyExists = existingFiles.any(
+            (f) => p.basename(f) == baseName,
+          );
+          if (alreadyExists) continue;
+
+          try {
+            final internalPath = await _copyFileToInternal(file);
+            newInternalPaths.add(internalPath);
+          } catch (e, st) {
+            debugPrint('Erro ao copiar arquivo: $e\n$st');
+          }
+        }
+
+        // Combina arquivos antigos + novos
+        final allFiles = [...existingFiles, ...newInternalPaths];
+
+        // Ajusta selectedIcons
+        List<String> icons;
+        if (existingPreset['selectedIcons'] != null &&
+            (existingPreset['selectedIcons'] as List).length ==
+                allFiles.length) {
+          icons = List<String>.from(existingPreset['selectedIcons']);
+        } else {
+          icons = List.generate(allFiles.length, (i) => 'guitar.png');
+        }
+
+        final updatedPreset = {
+          'id': existingPreset['id'],
+          'name': existingPreset['name'],
+          'files': allFiles,
+          'panValues': panValues,
+          'volumeValues': volumeValues,
+          'isMutedList': isMutedList,
+          'selectedIcons': icons,
+          'timestamp': DateTime.now().toIso8601String(),
+        };
+
+        presets[_selectedPresetIndex!] = jsonEncode(updatedPreset);
+        await prefs.setStringList(_presetsKey, presets);
+        await _loadSavedPresets();
+
+        // **Atualiza selectedFiles para refletir apenas os arquivos internos**
+        selectedFiles = allFiles.map((path) => XFile(path)).toList();
+
+        final newIndex = savedPresets.indexWhere(
+          (p) => p['id'] == updatedPreset['id'],
+        );
+        setState(() {
+          _selectedPresetIndex = newIndex >= 0
+              ? newIndex
+              : _selectedPresetIndex;
+          _isPresetUnsaved = false;
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Preset atualizado com sucesso!')),
+          );
+        }
+
+        return _selectedPresetIndex;
+      }
+
+      // === 2) Criar novo preset ===
+      if (selectedFiles.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Nenhum arquivo para salvar como preset'),
+            ),
+          );
+        }
+        return null;
+      }
+
+      final nameController = TextEditingController(text: _multitrackName);
+      final name = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Nome do Preset'),
+          content: TextField(controller: nameController, autofocus: true),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(
+                  context,
+                  nameController.text.isNotEmpty
+                      ? nameController.text
+                      : 'Novo Preset',
+                );
+              },
+              child: const Text('Salvar'),
+            ),
+          ],
+        ),
+      );
+
+      if (name == null) return null;
+
+      final List<String> internalPaths = [];
+      final Set<String> addedBaseNames = {};
+
+      for (final file in selectedFiles) {
+        final baseName = p.basename(file.path);
+        if (addedBaseNames.contains(baseName)) continue;
+
+        try {
+          final internalPath = await _copyFileToInternal(file);
+          internalPaths.add(internalPath);
+          addedBaseNames.add(baseName);
+        } catch (e, st) {
+          debugPrint('Erro ao copiar arquivo ao criar preset: $e\n$st');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Erro ao salvar arquivo ${file.path}: $e'),
+              ),
+            );
+          }
+          return null;
+        }
+      }
+
+      final newPreset = {
+        'id': _generateUniqueId(),
+        'name': name,
+        'files': internalPaths,
+        'panValues': panValues,
+        'volumeValues': volumeValues,
+        'isMutedList': isMutedList,
+        'selectedIcons': List.generate(
+          internalPaths.length,
+          (i) => 'guitar.png',
+        ),
+        'timestamp': DateTime.now().toIso8601String(),
+      };
+
+      presets.add(jsonEncode(newPreset));
+      await prefs.setStringList(_presetsKey, presets);
+      await _loadSavedPresets();
+
+      // Atualiza selectedFiles para refletir os arquivos do novo preset
+      selectedFiles = internalPaths.map((path) => XFile(path)).toList();
+
+      final newIndex = savedPresets.indexWhere(
+        (p) => p['id'] == newPreset['id'],
+      );
+      setState(() {
+        _selectedPresetIndex = newIndex >= 0
+            ? newIndex
+            : savedPresets.length - 1;
+        _isPresetUnsaved = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Preset salvo com sucesso!')),
+        );
+      }
+
+      return _selectedPresetIndex;
+    } catch (e, st) {
+      debugPrint('Erro ao salvar preset: $e\n$st');
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Erro ao salvar preset: $e')));
+      }
+      return null;
     }
   }
 
@@ -467,159 +508,146 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
-  Future<int?> saveCurrentPreset() async {
+  Widget _buildBottomFloatingControls() {
     if (selectedFiles.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Nenhum arquivo para salvar como preset')),
-        );
-      }
-      return null;
+      return SizedBox.shrink(); // Não mostra controles se não tiver arquivos
     }
 
-    // Se já tem um preset selecionado, atualiza ao invés de criar novo
-    if (_selectedPresetIndex != null &&
-        _selectedPresetIndex! < savedPresets.length) {
-      final preset = savedPresets[_selectedPresetIndex!];
-      final prefs = await SharedPreferences.getInstance();
-      final presets = prefs.getStringList(_presetsKey) ?? [];
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          // PLAY / PAUSE
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.green.withOpacity(0.3),
+                  blurRadius: 6,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: ElevatedButton.icon(
+              onPressed: isPlaying ? pauseAll : playSelected,
+              icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow, size: 24),
+              label: Text(
+                isPlaying ? 'PAUSE' : 'PLAY',
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                elevation: 0,
+              ),
+            ),
+          ),
 
-      try {
-        // Carrega o preset atual para manter os arquivos existentes
-        final existingPreset =
-            jsonDecode(presets[_selectedPresetIndex!]) as Map<String, dynamic>;
-        final existingFiles = List<String>.from(existingPreset['files'] ?? []);
+          const SizedBox(width: 12),
 
-        // Adiciona apenas os novos arquivos (que ainda não estão no preset)
-        final List<String> newInternalPaths = [];
-        for (final file in selectedFiles) {
-          // Verifica se o arquivo já existe no preset
-          final alreadyExists = existingFiles.any(
-            (path) => path.endsWith(p.basename(file.path)),
-          );
+          // STOP
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.red.withOpacity(isPlaying ? 0.3 : 0),
+                  blurRadius: 6,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: ElevatedButton.icon(
+              onPressed: isPlaying ? stopAll : null,
+              icon: const Icon(Icons.stop, size: 24),
+              label: const Text(
+                'STOP',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isPlaying
+                    ? Colors.redAccent
+                    : Colors.grey[700],
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                elevation: 0,
+                disabledBackgroundColor: Colors.grey[800],
+                disabledForegroundColor: Colors.grey[500],
+              ),
+            ),
+          ),
 
-          if (!alreadyExists) {
-            try {
-              final internalPath = await _copyFileToInternal(file);
-              newInternalPaths.add(internalPath);
-            } catch (e) {
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Erro ao salvar arquivo ${file.name}: $e'),
+          const SizedBox(width: 12),
+
+          // SAVE
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.blue.withOpacity(0.3),
+                  blurRadius: 6,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Builder(
+              builder: (context) {
+                return ElevatedButton.icon(
+                  onPressed: () async {
+                    final result = await saveCurrentPreset();
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          result != null
+                              ? 'Preset salvo com sucesso!'
+                              : 'Erro ao salvar preset',
+                        ),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                    if (result != null && mounted) {
+                      setState(() {
+                        _isPresetUnsaved = false;
+                      });
+                    }
+                  },
+                  icon: Icon(Icons.save),
+                  label: Text('SALVAR'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    elevation: 0,
                   ),
                 );
-              }
-              return null;
-            }
-          }
-        }
-
-        // Combina os arquivos existentes com os novos
-        final allFiles = [...existingFiles, ...newInternalPaths];
-
-        // Atualiza o preset mantendo o mesmo ID e nome
-        final updatedPreset = {
-          'id': preset['id'],
-          'name': preset['name'],
-          'files': allFiles,
-          'panValues': panValues,
-          'volumeValues': volumeValues,
-          'isMutedList': isMutedList,
-          'selectedIcons': selectedIcons.length == selectedFiles.length
-              ? selectedIcons
-              : List.generate(selectedFiles.length, (i) => 'guitar.png'),
-          'timestamp': DateTime.now().toIso8601String(),
-        };
-
-        presets[_selectedPresetIndex!] = jsonEncode(updatedPreset);
-        await prefs.setStringList(_presetsKey, presets);
-        await _loadSavedPresets();
-
-        setState(() {
-          _isPresetUnsaved = false;
-        });
-
-        return _selectedPresetIndex;
-      } catch (e) {
-        debugPrint('Erro ao atualizar preset: $e');
-        return null;
-      }
-    }
-    // Código para criar novo preset (mantido igual)
-    else {
-      final nameController = TextEditingController(text: _multitrackName);
-
-      final name = await showDialog<String>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('Nome do Preset'),
-          content: TextField(controller: nameController, autofocus: true),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('Cancelar'),
-            ),
-            TextButton(
-              onPressed: () {
-                Navigator.pop(
-                  context,
-                  nameController.text.isNotEmpty
-                      ? nameController.text
-                      : 'Novo Preset',
-                );
               },
-              child: Text('Salvar'),
             ),
-          ],
-        ),
-      );
-
-      if (name == null) return null;
-
-      final List<String> internalPaths = [];
-      for (final file in selectedFiles) {
-        try {
-          final internalPath = await _copyFileToInternal(file);
-          internalPaths.add(internalPath);
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Erro ao salvar arquivo ${file.name}: $e'),
-              ),
-            );
-          }
-          return null;
-        }
-      }
-
-      final preset = {
-        'id': _generateUniqueId(),
-        'name': name,
-        'files': internalPaths,
-        'panValues': panValues,
-        'volumeValues': volumeValues,
-        'isMutedList': isMutedList,
-        'selectedIcons': selectedIcons.length == selectedFiles.length
-            ? selectedIcons
-            : List.generate(selectedFiles.length, (i) => 'guitar.png'),
-        'timestamp': DateTime.now().toIso8601String(),
-      };
-
-      final prefs = await SharedPreferences.getInstance();
-      final presets = prefs.getStringList(_presetsKey) ?? [];
-      presets.add(jsonEncode(preset));
-      await prefs.setStringList(_presetsKey, presets);
-      await _loadSavedPresets();
-
-      setState(() {
-        _isPresetUnsaved = false;
-        _selectedPresetIndex = savedPresets.length - 1;
-      });
-
-      return savedPresets.length - 1;
-    }
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _deleteAllPresets() async {
@@ -799,13 +827,12 @@ class _MyAppState extends State<MyApp> {
     final name = await showDialog<String>(
       context: context,
       builder: (context) => Dialog(
-        backgroundColor:
-            Colors.transparent, // fundo transparente para efeito customizado
+        backgroundColor: Colors.transparent,
         child: StatefulBuilder(
           builder: (context, setState) => Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: Colors.grey[900], // fundo escuro, estilo app moderno
+              color: Colors.grey[900],
               borderRadius: BorderRadius.circular(16),
               boxShadow: [
                 BoxShadow(
@@ -818,7 +845,6 @@ class _MyAppState extends State<MyApp> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Título dinâmico com "Preset:" e nome digitado
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -863,7 +889,7 @@ class _MyAppState extends State<MyApp> {
                     ),
                   ),
                   onChanged: (value) {
-                    setState(() {}); // atualiza o título quando o texto muda
+                    setState(() {});
                   },
                 ),
                 const SizedBox(height: 24),
@@ -910,6 +936,7 @@ class _MyAppState extends State<MyApp> {
       ),
     );
 
+    // SE O USUÁRIO CANCELOU, RETORNA NULL E NÃO FAZ NADA
     if (name == null) return null;
 
     final preset = {
@@ -929,78 +956,30 @@ class _MyAppState extends State<MyApp> {
     await prefs.setStringList(_presetsKey, presets);
     await _loadSavedPresets();
 
+    // SÓ DEFINE O PRESET SELECIONADO SE O USUÁRIO REALMENTE CRIOU
     setState(() {
       _isPresetUnsaved = true;
+      _selectedPresetIndex = savedPresets.length - 1; // Seleciona o novo preset
+      _multitrackName = name; // ATUALIZA O NOME EXIBIDO NO TOPO
     });
-
-    // Abre o diálogo e mantém aberto
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: Colors.grey[900],
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.6),
-                blurRadius: 12,
-                offset: const Offset(0, 6),
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Preset Criado',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
-                  SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      color: Colors.deepPurpleAccent,
-                      strokeWidth: 3,
-                    ),
-                  ),
-                  SizedBox(width: 16),
-                  Text(
-                    'Abrindo arquivos...',
-                    style: TextStyle(color: Colors.white70, fontSize: 16),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-
-    // Espera 3 segundos
-    await Future.delayed(const Duration(seconds: 2));
-
-    // Fecha o diálogo e chama pickFiles
-    if (context.mounted) {
-      Navigator.pop(context);
-      pickFiles();
-    }
 
     return savedPresets.length - 1;
   }
 
-  bool _isLoading = false;
+  // Adicione este método para salvar automaticamente
+  Future<void> _autoSavePreset() async {
+    if (_selectedPresetIndex == null || selectedFiles.isEmpty) return;
+
+    try {
+      await saveCurrentPreset();
+      setState(() {
+        _isPresetUnsaved = false;
+      });
+    } catch (e) {
+      debugPrint('Erro no salvamento automático: $e');
+    }
+  }
+
   Future<void> loadPresetWithDelay(int index, BuildContext oldContext) async {
     // Captura o contexto da tela principal antes de fechar o popup
     final rootContext = Navigator.of(oldContext, rootNavigator: true).context;
@@ -1173,11 +1152,10 @@ class _MyAppState extends State<MyApp> {
       await prefs.setStringList(_presetsKey, presets);
       await _loadSavedPresets();
 
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Preset deletado com sucesso')));
-      }
+      // Use o scaffoldMessengerKey global em vez do contexto local
+      scaffoldMessengerKey.currentState?.showSnackBar(
+        SnackBar(content: Text('Preset deletado com sucesso')),
+      );
     }
   }
 
@@ -1453,12 +1431,13 @@ class _MyAppState extends State<MyApp> {
     );
 
     if (confirm == true) {
-      await deletePreset(index, context);
+      await deletePreset(
+        index,
+        this.context,
+      ); // Use this.context em vez do contexto do diálogo
     }
   }
 
-  late String _currentTime;
-  late String _currentDate;
   late final Timer _timera;
   String _multitrackName = "MultiX"; // Default name
 
@@ -1492,11 +1471,7 @@ class _MyAppState extends State<MyApp> {
   List<double> volumeValues = [];
 
   void _updateDateTime() {
-    final now = DateTime.now();
-    setState(() {
-      _currentTime = DateFormat('HH:mm:ss').format(now);
-      _currentDate = DateFormat('EEEE dd MMMM').format(now);
-    });
+    setState(() {});
   }
 
   void _showIconSelectionDialog(int trackIndex) {
@@ -1688,6 +1663,18 @@ class _MyAppState extends State<MyApp> {
   }
 
   Future<void> pickFiles({bool skipNameDialog = false}) async {
+    // Verifica se há um preset selecionado
+    if (_selectedPresetIndex == null && !skipNameDialog) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Selecione um preset primeiro para adicionar arquivos'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // Resto do código permanece igual...
     final files = await openFiles(
       acceptedTypeGroups: [
         XTypeGroup(
@@ -1744,13 +1731,76 @@ class _MyAppState extends State<MyApp> {
       await platform.invokeMethod('setPlayerPan', {'index': index, 'pan': pan});
       setState(() {
         panValues[index] = pan;
+        _isPresetUnsaved = true; // Marca como não salvo
       });
+      // _autoSavePreset(); // Salva automaticamente
     } on PlatformException catch (e) {
       print('Erro ao ajustar pan: ${e.message}');
     }
   }
 
+  Future<void> setPlayerVolume(int index, double volume) async {
+    print('Setting volume - index: $index, volume: $volume');
+    try {
+      await platform.invokeMethod('setPlayerVolume', {
+        'index': index,
+        'volume': volume,
+      });
+      setState(() {
+        volumeValues[index] = volume;
+        isMutedList[index] = volume == 0.0;
+        _isPresetUnsaved = true; // Marca como não salvo
+      });
+      // _autoSavePreset(); // Salva automaticamente
+    } on PlatformException catch (e) {
+      print('Erro ao ajustar volume: ${e.message}');
+    }
+  }
+
+  Future<void> toggleMute(int index) async {
+    final newMuteState = !isMutedList[index];
+    final newVolume = newMuteState ? 0.0 : volumeValues[index];
+
+    try {
+      await platform.invokeMethod('mutePlayer', {
+        'index': index,
+        'mute': newMuteState,
+      });
+
+      setState(() {
+        isMutedList[index] = newMuteState;
+        if (!newMuteState) {
+          volumeValues[index] = newVolume;
+        }
+        _isPresetUnsaved = true; // Marca como não salvo
+      });
+      // _autoSavePreset(); // Salva automaticamente
+    } on PlatformException catch (e) {
+      print('Erro ao mutar: ${e.message}');
+    }
+  }
+
+  // No método addFile():
   Future<void> addFile() async {
+    if (_selectedPresetIndex == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Selecione um preset primeiro para adicionar arquivos'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // Salva a posição atual de referência
+    final currentPositionBeforeAdd = currentPosition;
+    final wasPlaying = isPlaying;
+
+    // Pausa todos os players apenas se estiver tocando
+    if (wasPlaying) {
+      await pauseAll();
+    }
+
     final file = await openFile(
       acceptedTypeGroups: [
         XTypeGroup(
@@ -1774,97 +1824,91 @@ class _MyAppState extends State<MyApp> {
       isMutedList.add(false);
       panValues.add(0.0);
       volumeValues.add(0.7);
+
+      if (selectedIcons.length < selectedFiles.length) {
+        selectedIcons.add('guitar.png');
+      }
+
+      _isPresetUnsaved = true;
+    });
+
+    try {
+      final newIndex = selectedFiles.length - 1;
+
+      // Cria o novo player na mesma posição dos outros
+      await platform.invokeMethod('addPlayer', {
+        'filePath': file.path,
+        'index': newIndex,
+        'pan': 0.0,
+        'volume': 0.7,
+        'startPosition': currentPositionBeforeAdd.inMilliseconds / 1000.0,
+      });
+
+      // Se estava tocando antes, resume todos os players
+      if (wasPlaying) {
+        for (int i = 0; i <= newIndex; i++) {
+          await platform.invokeMethod('startPlayer', {
+            'index': i,
+            'startPosition': currentPositionBeforeAdd.inMilliseconds / 1000.0,
+          });
+        }
+      }
+    } catch (e) {
+      print('Erro ao configurar novo player: $e');
+    }
+
+    // Pequeno delay para iOS
+    await Future.delayed(const Duration(milliseconds: 100));
+  }
+
+  void _startProgressTimer() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+      if (!userIsSeeking && isPlaying) {
+        setState(() {
+          currentPosition += const Duration(milliseconds: 100);
+          if (currentPosition >= maxDuration) {
+            _timer?.cancel();
+            isPlaying = false;
+            currentPosition = Duration.zero;
+            print('Reprodução concluída');
+          }
+        });
+      }
     });
   }
 
-  Future<void> setPlayerVolume(int index, double volume) async {
-    print('Setting volume - index: $index, volume: $volume');
-    try {
-      await platform.invokeMethod('setPlayerVolume', {
-        'index': index,
-        'volume': volume,
-      });
-      setState(() {
-        volumeValues[index] = volume;
-        isMutedList[index] = volume == 0.0;
-      });
-    } on PlatformException catch (e) {
-      print('Erro ao ajustar volume: ${e.message}');
-      print('Detalhes do erro: ${e.details}');
-      print('Código do erro: ${e.code}');
-    }
-  }
-
-  Future<void> toggleMute(int index) async {
-    final newMuteState = !isMutedList[index];
-    final newVolume = newMuteState ? 0.0 : volumeValues[index];
-
-    try {
-      await platform.invokeMethod('mutePlayer', {
-        'index': index,
-        'mute': newMuteState,
-      });
-
-      setState(() {
-        isMutedList[index] = newMuteState;
-        if (!newMuteState) {
-          volumeValues[index] = newVolume;
-        }
-      });
-    } on PlatformException catch (e) {
-      print('Erro ao mutar: ${e.message}');
-    }
-  }
-
-  Future<void> playSelected() async {
+  Future<void> playSelected({bool startFromBeginning = false}) async {
     if (selectedFiles.isEmpty) {
       print('Nenhum arquivo selecionado para reprodução');
       return;
     }
 
-    if (isPlaying) return;
-
-    print('Obtendo duração do primeiro arquivo...');
-    final duration = await getAudioDuration(selectedFiles.first.path);
-    print('Duração obtida: $duration segundos');
-
-    if (duration <= 0) {
-      print('Duração inválida: $duration');
-      return;
-    }
-
-    List<String> filePaths = selectedFiles.map((f) => f.path).toList();
-    print('Iniciando reprodução de ${filePaths.length} arquivos...');
-
     try {
-      print('🎚 Pan values enviados: $panValues');
-      print('🔊 Volume values enviados: $volumeValues');
+      final startPosition = startFromBeginning
+          ? 0.0
+          : currentPosition.inMilliseconds.toDouble() / 1000.0;
+
+      List<String> filePaths = selectedFiles.map((f) => f.path).toList();
+
+      print(
+        '🎶 Iniciando reprodução de ${selectedFiles.length} arquivos a partir de $startPosition segundos...',
+      );
+
       await platform.invokeMethod('playUploadedSounds', {
         'filePaths': filePaths,
         'pans': panValues,
         'volumes': volumeValues,
+        'startPosition': startPosition,
       });
-      print('Reprodução iniciada no nativo');
+
+      if (startFromBeginning) currentPosition = Duration.zero;
 
       setState(() {
         isPlaying = true;
-        currentPosition = Duration.zero;
-        maxDuration = Duration(milliseconds: (duration * 1000).round());
       });
 
-      _timer?.cancel();
-      _timer = Timer.periodic(Duration(milliseconds: 100), (timer) {
-        if (!userIsSeeking) {
-          setState(() {
-            currentPosition += Duration(milliseconds: 100);
-            if (currentPosition >= maxDuration) {
-              _timer?.cancel();
-              isPlaying = false;
-              print('Reprodução concluída');
-            }
-          });
-        }
-      });
+      _startProgressTimer();
     } catch (e) {
       print('Erro ao iniciar reprodução: $e');
       setState(() {
@@ -1970,8 +2014,8 @@ class _MyAppState extends State<MyApp> {
       await platform.invokeMethod('stopSounds');
       _timer?.cancel();
       setState(() {
-        currentPosition = Duration.zero;
         isPlaying = false;
+        currentPosition = Duration.zero; // Isso reseta para o início
       });
     } on PlatformException catch (e) {
       print('Erro ao parar sons: ${e.message}');
@@ -1982,8 +2026,7 @@ class _MyAppState extends State<MyApp> {
   double _currentPage = 0.0;
 
   List<int> _selectedPresetsIndices = []; // Índices dos presets na playlist
-  List<Map<String, dynamic>> _presetsPlaylist =
-      []; // Lista de presets na playlist (apenas IDs e metadados)
+  // Lista de presets na playlist (apenas IDs e metadados)
   List<Map<String, dynamic>> _loadedPresets =
       []; // Presets carregados na memória
 
@@ -1996,12 +2039,21 @@ class _MyAppState extends State<MyApp> {
 
   Future<void> seekTo(Duration position) async {
     try {
+      // Salva o estado atual de reprodução antes de fazer o seek
+      final wasPlaying = isPlaying;
+
       await platform.invokeMethod('seekToPosition', {
-        'seconds': position.inSeconds.toDouble(),
+        'seconds': position.inMilliseconds.toDouble() / 1000.0,
       });
+
       setState(() {
         currentPosition = position;
       });
+
+      // Só reinicia o timer se estava tocando antes do seek
+      if (wasPlaying) {
+        _startProgressTimer();
+      }
     } on PlatformException catch (e) {
       print('Erro ao fazer seek: ${e.message}');
     }
@@ -2086,13 +2138,7 @@ class _MyAppState extends State<MyApp> {
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
-                                  subtitle: Text(
-                                    '${preset['fileCount']} arquivos',
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 12,
-                                    ),
-                                  ),
+
                                   trailing: IconButton(
                                     icon: Icon(
                                       isInPlaylist
@@ -2186,91 +2232,6 @@ class _MyAppState extends State<MyApp> {
     return '$minutes:$seconds';
   }
 
-  // In the _buildBottomFloatingControls() method, modify it like this:
-  Widget _buildBottomFloatingControls() {
-    if (selectedFiles.isEmpty) {
-      return SizedBox.shrink(); // Don't show controls if no files
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.green.withOpacity(0.3),
-                  blurRadius: 6,
-                  offset: const Offset(0, 3),
-                ),
-              ],
-            ),
-            child: ElevatedButton.icon(
-              onPressed: isPlaying ? pauseAll : playSelected,
-              icon: Icon(isPlaying ? Icons.pause : Icons.play_arrow, size: 24),
-              label: Text(
-                isPlaying ? 'PAUSE' : 'PLAY',
-                style: const TextStyle(fontWeight: FontWeight.bold),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 12,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                elevation: 0,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(8),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.red.withOpacity(isPlaying ? 0.3 : 0),
-                  blurRadius: 6,
-                  offset: const Offset(0, 3),
-                ),
-              ],
-            ),
-            child: ElevatedButton.icon(
-              onPressed: isPlaying ? stopAll : null,
-              icon: const Icon(Icons.stop, size: 24),
-              label: const Text(
-                'STOP',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: isPlaying
-                    ? Colors.redAccent
-                    : Colors.grey[700],
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 12,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                elevation: 0,
-                disabledBackgroundColor: Colors.grey[800],
-                disabledForegroundColor: Colors.grey[500],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Drawer buildPresetDrawer(BuildContext context) {
     return Drawer(
       backgroundColor: Colors.black,
@@ -2292,58 +2253,43 @@ class _MyAppState extends State<MyApp> {
               final index = await createBlankPreset();
               if (index != null && mounted) {
                 await loadPreset(index, context);
+
+                // Adiciona o preset na lista de carregados
+                _loadedPresets.add(savedPresets[index]);
+
+                // Marca como selecionado
+                _selectedPresetIndex = index;
+                if (!_selectedPresetsIndices.contains(index)) {
+                  _selectedPresetsIndices.add(index);
+                }
+
+                setState(() {}); // Atualiza a UI
+
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('Novo preset criado! Adicione arquivos.'),
                     duration: Duration(seconds: 2),
                   ),
                 );
+
                 pickFiles(skipNameDialog: true);
               }
             },
           ),
-          ListTile(
-            leading: Icon(Icons.folder_open, color: Colors.deepPurple),
-            title: Text(
-              'Selecionar arquivos',
-              style: TextStyle(color: Colors.white),
-            ),
-            onTap: () {
-              Navigator.pop(context);
-              pickFiles();
-            },
-          ),
-          ListTile(
-            leading: Icon(Icons.file_upload, color: Colors.green),
-            title: Text(
-              'Adicionar arquivo',
-              style: TextStyle(color: Colors.white),
-            ),
-            onTap: () {
-              Navigator.pop(context);
-              addFile();
-            },
-          ),
-          ListTile(
-            leading: Icon(Icons.save, color: Colors.amber),
-            title: Text('Meus Presets', style: TextStyle(color: Colors.white)),
-            onTap: () {
-              Navigator.pop(context);
-              _showPresetsDialog();
-            },
-          ),
-          if (selectedFiles.isNotEmpty)
-            ListTile(
-              leading: Icon(Icons.delete, color: Colors.red),
-              title: Text(
-                'Limpar arquivos',
-                style: TextStyle(color: Colors.white),
+          if (_selectedPresetIndex !=
+              null) // Só mostra se há preset selecionado
+            if (selectedFiles.isNotEmpty)
+              ListTile(
+                leading: Icon(Icons.delete, color: Colors.red),
+                title: Text(
+                  'Limpar arquivos',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  clearAllFiles();
+                },
               ),
-              onTap: () {
-                Navigator.pop(context);
-                clearAllFiles();
-              },
-            ),
           if (selectedFiles.isNotEmpty)
             ListTile(
               leading: Icon(Icons.edit, color: Colors.indigo),
@@ -2375,39 +2321,6 @@ class _MyAppState extends State<MyApp> {
   }
 
   // And in the build() method, replace the floatingActionButton section with:
-  PopupMenuItem<int> _buildAnimatedMenuItem(
-    IconData icon,
-    Color color,
-    String text,
-    int value,
-  ) {
-    return PopupMenuItem(
-      value: value,
-      child: TweenAnimationBuilder<double>(
-        tween: Tween(begin: 0.8, end: 1.0),
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOutBack,
-        builder: (context, scale, child) {
-          return Transform.scale(
-            scale: scale,
-            child: Row(
-              children: [
-                Icon(icon, color: color),
-                const SizedBox(width: 10),
-                Text(
-                  text,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
 
   bool isSelected = true;
   Future<double> getAudioDuration(String filePath) async {
@@ -2423,127 +2336,7 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
-  void _showAudioOutputModal() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.black,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Container(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                    'Selecionar Saída de Áudio',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  ListTile(
-                    leading: Icon(
-                      Icons.headphones,
-                      color: _selectedAudioOutput == 'headphones'
-                          ? Colors.greenAccent
-                          : Colors.white,
-                    ),
-                    title: Text(
-                      'Fones de Ouvido',
-                      style: TextStyle(
-                        color: _selectedAudioOutput == 'headphones'
-                            ? Colors.greenAccent
-                            : Colors.white,
-                        fontWeight: _selectedAudioOutput == 'headphones'
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                      ),
-                    ),
-                    onTap: () {
-                      setState(() {
-                        _selectedAudioOutput = 'headphones';
-                      });
-                      platform.invokeMethod('setAudioOutput', 'headphones');
-                      Navigator.pop(context);
-                    },
-                  ),
-                  ListTile(
-                    leading: Icon(
-                      Icons.volume_up,
-                      color: _selectedAudioOutput == 'speaker'
-                          ? Colors.blueAccent
-                          : Colors.white,
-                    ),
-                    title: Text(
-                      'Alto-falante',
-                      style: TextStyle(
-                        color: _selectedAudioOutput == 'speaker'
-                            ? Colors.blueAccent
-                            : Colors.white,
-                        fontWeight: _selectedAudioOutput == 'speaker'
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                      ),
-                    ),
-                    onTap: () {
-                      setState(() {
-                        _selectedAudioOutput = 'speaker';
-                      });
-                      platform.invokeMethod('setAudioOutput', 'speaker');
-                      Navigator.pop(context);
-                    },
-                  ),
-                  ListTile(
-                    leading: Icon(
-                      Icons.bluetooth,
-                      color: _selectedAudioOutput == 'bluetooth'
-                          ? Colors.purpleAccent
-                          : Colors.white,
-                    ),
-                    title: Text(
-                      'Bluetooth',
-                      style: TextStyle(
-                        color: _selectedAudioOutput == 'bluetooth'
-                            ? Colors.purpleAccent
-                            : Colors.white,
-                        fontWeight: _selectedAudioOutput == 'bluetooth'
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                      ),
-                    ),
-                    onTap: () {
-                      setState(() {
-                        _selectedAudioOutput = 'bluetooth';
-                      });
-                      platform.invokeMethod('setAudioOutput', 'bluetooth');
-                      Navigator.pop(context);
-                    },
-                  ),
-                  const SizedBox(height: 20),
-                  ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.deepPurpleAccent,
-                      foregroundColor: Colors.white,
-                    ),
-                    child: const Text('Fechar'),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  String _selectedAudioOutput = 'headphones'; // Valor padrão
+  // Valor padrão
 
   @override
   Widget build(BuildContext context) {
@@ -2596,6 +2389,38 @@ class _MyAppState extends State<MyApp> {
       ),
     );
 
+    Widget _buildEmptyPreset() {
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            'Preset "${_multitrackName}" está vazio',
+            style: TextStyle(color: Colors.white70, fontSize: 16),
+          ),
+          SizedBox(height: 20),
+          ElevatedButton.icon(
+            onPressed: pickFiles,
+            icon: Icon(Icons.add),
+            label: Text('Adicionar Arquivos'),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+          ),
+          SizedBox(height: 10),
+          Text('ou', style: TextStyle(color: Colors.white54)),
+          SizedBox(height: 10),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _selectedPresetIndex = null;
+              });
+
+              // Novos métodos para construir as diferentes views:
+            },
+            child: Text('Selecionar outro preset'),
+          ),
+        ],
+      );
+    }
+
     return MaterialApp(
       scaffoldMessengerKey: scaffoldMessengerKey,
       debugShowCheckedModeBanner: false,
@@ -2604,159 +2429,8 @@ class _MyAppState extends State<MyApp> {
         floatingActionButton: _buildBottomFloatingControls(),
         floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
 
-        /*    floatingActionButton: SpeedDial(
-          //  icon: Icons.menu,
-          //  activeIcon: Icons.close,
-          // backgroundColor: Colors.deepPurple,
-          foregroundColor: Colors.white,
-          activeBackgroundColor: Colors.red,
-          activeForegroundColor: Colors.white,
-          buttonSize: const Size(60, 60),
-          childrenButtonSize: const Size(56, 56),
-          visible: true,
-          closeManually: false,
-          renderOverlay: true,
-          overlayColor: Colors.black,
-          overlayOpacity: 0.5,
-          elevation: 8.0,
-          shape: const CircleBorder(),
-          //   spacing: 10,
-          spaceBetweenChildren: 4,
-          curve: Curves.easeInOut,
-          animationDuration: const Duration(milliseconds: 300),
-          direction: SpeedDialDirection.up,
-          onOpen: () => print('ABRIU'),
-          onClose: () => print('FECHOU'),
-          heroTag: 'speed-dial-hero',
-          backgroundColor: Colors.deepPurple,
-          icon: Icons.menu,
-          activeIcon: Icons.close,
-          spacing: 12,
-          children: [
-            SpeedDialChild(
-              child: Icon(Icons.add, color: Colors.white),
-              backgroundColor: Colors.blue,
-              label: 'Novo Preset',
-              onTap: () async {
-                final index = await createBlankPreset();
-                if (index != null && mounted) {
-                  // Carrega o novo preset vazio
-                  await loadPreset(index, context);
-
-                  // Mostra feedback visual
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Novo preset criado! Adicione arquivos.'),
-                      duration: Duration(seconds: 2),
-                    ),
-                  );
-
-                  // Abre o diálogo de seleção de arquivos automaticamente, pulando o diálogo de nome
-                  pickFiles(skipNameDialog: true);
-                }
-              },
-            ),
-            SpeedDialChild(
-              child: Icon(Icons.folder_open, color: Colors.white),
-              backgroundColor: Colors.deepPurple,
-              label: 'Selecionar arquivos',
-              onTap:
-                  pickFiles, // Aqui não passa skipNameDialog, então perguntará o nome
-            ),
-            SpeedDialChild(
-              child: Icon(Icons.add, color: Colors.white),
-              backgroundColor: Colors.green,
-              label: 'Adicionar arquivo',
-              onTap: addFile,
-            ),
-            SpeedDialChild(
-              child: Icon(Icons.save, color: Colors.amber),
-              backgroundColor: Colors.black54,
-              label: 'Meus Presets',
-              onTap: _showPresetsDialog,
-            ),
-            if (selectedFiles.isNotEmpty)
-              SpeedDialChild(
-                child: Icon(Icons.delete, color: Colors.redAccent),
-                backgroundColor: Colors.black54,
-                label: 'Limpar arquivos',
-                onTap: clearAllFiles,
-              ),
-            if (selectedFiles.isNotEmpty)
-              SpeedDialChild(
-                child: Icon(Icons.edit, color: Colors.blueAccent),
-                backgroundColor: Colors.black54,
-                label: 'Renomear',
-                onTap: () async {
-                  final nameChanged = await _showNameDialog(
-                    initialName: _multitrackName,
-                  );
-                  if (nameChanged && _selectedPresetIndex != null) {
-                    await _updatePresetName(_multitrackName);
-                  }
-                },
-              ),
-          ],
-        ),
-      */
         appBar: AppBar(
           actions: [
-            /*
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_selectedPresetIndex != null)
-                  GestureDetector(
-                    onTap: () {
-                      _exportPreset();
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Row(
-                        children: const [
-                          Icon(
-                            Icons.explore_outlined,
-                            color: Colors.blueAccent,
-                          ),
-                          SizedBox(width: 6),
-                        ],
-                      ),
-                    ),
-                  ),
-                GestureDetector(
-                  onTap: () {
-                    _importPreset();
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Row(
-                      children: const [
-                        Icon(
-                          Icons.import_export_rounded,
-                          color: Colors.greenAccent,
-                        ),
-                        SizedBox(width: 6),
-                      ],
-                    ),
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () {
-                    _showPresetsBankDialog();
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Row(
-                      children: const [
-                        Icon(Icons.storage_rounded, color: Colors.deepPurple),
-                        SizedBox(width: 6),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-*/
             // Botão de reset com ícone e texto numa Row
             GestureDetector(
               onTap: () async {
@@ -2773,24 +2447,7 @@ class _MyAppState extends State<MyApp> {
                 ),
               ),
             ),
-            // Na AppBar actions:
-            /*
-            IconButton(
-              icon: const Icon(Icons.audio_file),
-              onPressed: _showAudioOutputModal,
-              tooltip: 'Selecionar saída de áudio',
-            ),*/
-            /*
-            ElevatedButton(
-              onPressed: () async {
-                final savedIndex = await saveCurrentPreseta();
-                if (savedIndex != null && mounted) {
-                  //  Navigator.pop(context);
-                  await loadPreset(savedIndex, context);
-                }
-              },
-              child: Text('Save'),
-            ),*/
+
             PopupMenuButton<int>(
               icon: const Icon(Icons.menu, color: Colors.deepPurple, size: 28),
               color: Colors.black,
@@ -2804,10 +2461,25 @@ class _MyAppState extends State<MyApp> {
                   case 6:
                     _showPresetsBankDialog();
                     break;
+                  case 7: // ADICIONE ESTA OPÇÃO
+                    _showPresetsDialog();
+                    break;
                   case 0:
                     final index = await createBlankPreset();
                     if (index != null && mounted) {
                       await loadPreset(index, context);
+
+                      // Adiciona o preset na lista de carregados
+                      _loadedPresets.add(savedPresets[index]);
+
+                      // Marca como selecionado
+                      _selectedPresetIndex = index;
+                      if (!_selectedPresetsIndices.contains(index)) {
+                        _selectedPresetsIndices.add(index);
+                      }
+
+                      setState(() {}); // Atualiza a UI
+
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text(
@@ -2816,8 +2488,10 @@ class _MyAppState extends State<MyApp> {
                           duration: Duration(seconds: 2),
                         ),
                       );
+
                       pickFiles(skipNameDialog: true);
                     }
+
                     break;
                   case 1:
                     pickFiles();
@@ -2852,61 +2526,7 @@ class _MyAppState extends State<MyApp> {
                     ],
                   ),
                 ),
-                /*
-                PopupMenuItem<int>(
-                  value: 1,
-                  child: Row(
-                    children: const [
-                      Icon(Icons.folder_open, color: Colors.deepPurple),
-                      SizedBox(width: 10),
-                      Text('Selecionar arquivos'),
-                    ],
-                  ),
-                ),*/
-                PopupMenuItem<int>(
-                  value: 2,
-                  child: Row(
-                    children: const [
-                      Icon(Icons.file_upload, color: Colors.green),
-                      SizedBox(width: 10),
-                      Text('Adicionar arquivo'),
-                    ],
-                  ),
-                ),
-                PopupMenuItem<int>(
-                  value: 3,
-                  child: Row(
-                    children: const [
-                      Icon(Icons.save, color: Colors.amber),
-                      SizedBox(width: 10),
-                      Text('Meus Presets'),
-                    ],
-                  ),
-                ),
-                /*
-                if (selectedFiles.isNotEmpty)
-                  PopupMenuItem<int>(
-                    value: 4,
-                    child: Row(
-                      children: const [
-                        Icon(Icons.delete, color: Colors.red),
-                        SizedBox(width: 10),
-                        Text('Limpar arquivos'),
-                      ],
-                    ),
-                  ),*/
-                /*
-                if (selectedFiles.isNotEmpty)
-                  PopupMenuItem<int>(
-                    value: 5,
-                    child: Row(
-                      children: const [
-                        Icon(Icons.edit, color: Colors.indigo),
-                        SizedBox(width: 10),
-                        Text('Renomear'),
-                      ],
-                    ),
-                  ),*/
+
                 PopupMenuItem<int>(
                   value: 6,
                   child: Row(
@@ -2917,31 +2537,23 @@ class _MyAppState extends State<MyApp> {
                     ],
                   ),
                 ),
+                PopupMenuItem<int>(
+                  // ADICIONE ESTE ITEM
+                  value: 7,
+                  child: Row(
+                    children: const [
+                      Icon(Icons.playlist_play, color: Colors.green),
+                      SizedBox(width: 10),
+                      Text('Minhas Playlists'),
+                    ],
+                  ),
+                ),
               ],
             ),
           ],
           title: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              /*
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Text(
-                    _currentTime,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(width: 20),
-                  Text(
-                    _currentDate,
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ],
-              ),*/
               const SizedBox(height: 4),
               GestureDetector(
                 onTap: () async {
@@ -2971,164 +2583,130 @@ class _MyAppState extends State<MyApp> {
           centerTitle: true,
           backgroundColor: const Color.fromARGB(255, 0, 0, 0),
           elevation: 8,
-          //  shadowColor: Colors.greenAccent.withOpacity(0.7),
-          /*
-          bottom: PreferredSize(
-            preferredSize: Size.fromHeight(4),
-            child: Container(
-              height: 4,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Colors.greenAccent, Colors.blueAccent],
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                ),
-              ),
-            ),
-          ),*/
         ),
         body: SafeArea(
           child: Padding(
             padding: const EdgeInsets.only(bottom: 56),
             child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Column(
-                  children: [
-                    if (savedPresets.isNotEmpty &&
-                        _loadedPresets.isNotEmpty) ...[
-                      Container(
-                        padding: EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[900],
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                if (savedPresets.isNotEmpty && _loadedPresets.isNotEmpty) ...[
+                  Container(
+                    padding: EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[900],
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
                           children: [
-                            Row(
-                              children: [
-                                Text(
-                                  'Presets adicionados:',
-                                  style: TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                Spacer(),
-                                IconButton(
-                                  icon: Icon(
-                                    Icons.add_circle_outline,
-                                    size: 20,
-                                    color: Colors.white70,
-                                  ),
-                                  onPressed: _showPresetsBankDialog,
-                                  tooltip: 'Adicionar mais presets',
-                                ),
-                              ],
-                            ),
-                            SizedBox(height: 6),
-                            SizedBox(
-                              height: 60,
-                              child: ListView.separated(
-                                scrollDirection: Axis.horizontal,
-                                itemCount: _loadedPresets.length,
-                                separatorBuilder: (_, __) => SizedBox(width: 8),
-                                itemBuilder: (context, index) {
-                                  final preset = _loadedPresets[index];
-                                  final originalIndex = savedPresets.indexWhere(
-                                    (p) => p['id'] == preset['id'],
-                                  );
-
-                                  return Container(
-                                    padding: EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 10,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color:
-                                          _selectedPresetIndex == originalIndex
-                                          ? Colors.blueAccent.withOpacity(0.3)
-                                          : Colors.grey[800],
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                        color:
-                                            _selectedPresetIndex ==
-                                                originalIndex
-                                            ? Colors.blueAccent
-                                            : Colors.transparent,
-                                        width: 1.2,
-                                      ),
-                                    ),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        GestureDetector(
-                                          onTap: () => loadPreset(
-                                            originalIndex,
-                                            context,
-                                          ),
-                                          child: Row(
-                                            children: [
-                                              Icon(
-                                                Icons.music_note,
-                                                color: Colors.white70,
-                                                size: 18,
-                                              ),
-                                              SizedBox(width: 6),
-                                              Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                                  Text(
-                                                    preset['name'],
-                                                    style: TextStyle(
-                                                      color: Colors.white,
-                                                      fontSize: 13,
-                                                    ),
-                                                  ),
-                                                  Text(
-                                                    '${(preset['files'] as List).length} arquivos',
-                                                    style: TextStyle(
-                                                      color: Colors.white54,
-                                                      fontSize: 11,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        SizedBox(width: 8),
-                                        GestureDetector(
-                                          onTap: () {
-                                            setState(() {
-                                              _selectedPresetsIndices.remove(
-                                                originalIndex,
-                                              );
-                                              _loadedPresets.removeAt(index);
-                                            });
-                                          },
-                                          child: Icon(
-                                            Icons.delete_outline,
-                                            color: Colors.redAccent,
-                                            size: 18,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                },
+                            Text(
+                              'Presets adicionados:',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
                               ),
+                            ),
+                            Spacer(),
+                            IconButton(
+                              icon: Icon(
+                                Icons.add_circle_outline,
+                                size: 20,
+                                color: Colors.white70,
+                              ),
+                              onPressed: _showPresetsBankDialog,
+                              tooltip: 'Adicionar mais presets',
                             ),
                           ],
                         ),
-                      ),
-                      SizedBox(height: 12),
-                      Divider(color: Colors.grey[800], height: 1),
-                    ],
-                  ],
-                ),
+                        SizedBox(height: 6),
+                        SizedBox(
+                          height: 60,
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: _loadedPresets.length,
+                            separatorBuilder: (_, __) => SizedBox(width: 8),
+                            itemBuilder: (context, index) {
+                              final preset = _loadedPresets[index];
+                              final originalIndex = savedPresets.indexWhere(
+                                (p) => p['id'] == preset['id'],
+                              );
+
+                              return GestureDetector(
+                                onTap: () => loadPreset(originalIndex, context),
+                                child: Container(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: _selectedPresetIndex == originalIndex
+                                        ? Colors.blueAccent.withOpacity(0.3)
+                                        : Colors.grey[800],
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color:
+                                          _selectedPresetIndex == originalIndex
+                                          ? Colors.blueAccent
+                                          : Colors.transparent,
+                                      width: 1.2,
+                                    ),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            Icons.music_note,
+                                            color: Colors.white70,
+                                            size: 18,
+                                          ),
+                                          SizedBox(width: 6),
+                                          Text(
+                                            preset['name'],
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 13,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      SizedBox(width: 8),
+                                      GestureDetector(
+                                        onTap: () {
+                                          setState(() {
+                                            _selectedPresetsIndices.remove(
+                                              originalIndex,
+                                            );
+                                            _loadedPresets.removeAt(index);
+                                          });
+                                        },
+                                        child: Icon(
+                                          Icons.delete_outline,
+                                          color: Colors.redAccent,
+                                          size: 18,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  SizedBox(height: 12),
+                  Divider(color: Colors.grey[800], height: 1),
+                ],
                 if (selectedFiles.isNotEmpty)
                   Container(
                     alignment: Alignment.center,
@@ -3190,142 +2768,215 @@ class _MyAppState extends State<MyApp> {
                       ),
                     ),
                   ),
-                /*
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: pickFiles,
-                        style: OutlinedButton.styleFrom(
-                          side: BorderSide(color: Colors.grey.shade400),
-                          padding: EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          backgroundColor: Colors.transparent,
-                        ),
-                        child: Icon(
-                          Icons.folder_open,
-                          color: const Color.fromARGB(255, 151, 40, 255),
-                        ),
-                      ),
-                    ),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: addFile,
-                        style: OutlinedButton.styleFrom(
-                          side: BorderSide(color: Colors.grey.shade400),
-                          padding: EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          backgroundColor: Colors.transparent,
-                        ),
-                        child: Icon(
-                          Icons.add,
-                          color: const Color.fromARGB(255, 0, 255, 4),
-                        ),
-                      ),
-                    ),
-                    SizedBox(width: 8),
-                    if (selectedFiles.isNotEmpty)
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: clearAllFiles,
-                          style: OutlinedButton.styleFrom(
-                            side: BorderSide(color: Colors.grey.shade400),
-                            padding: EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            backgroundColor: Colors.transparent,
-                          ),
-                          child: Icon(
-                            Icons.delete,
-                            color: const Color.fromARGB(255, 255, 11, 11),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),*/
                 Expanded(
-                  child: selectedFiles.isEmpty
+                  child: _selectedPresetIndex == null
                       ? Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            Center(
-                              child: Text(
-                                textAlign: TextAlign.center,
-                                'Nenhum preset selecionado. Clique em uma dos botoes acima',
-                                style: TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 14,
-                                ),
+                            Text(
+                              'Bem vindo ao MultX',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 14,
                               ),
+                              textAlign: TextAlign.center,
                             ),
-                            GestureDetector(
-                              onTap: () async {
+                            SizedBox(height: 20),
+                            ElevatedButton.icon(
+                              onPressed: () async {
                                 final index = await createBlankPreset();
                                 if (index != null && mounted) {
-                                  await loadPreset(index, context);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      behavior: SnackBarBehavior.floating,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      margin: const EdgeInsets.all(16),
-                                      elevation: 12,
-                                      duration: const Duration(seconds: 2),
-                                      content: Row(
-                                        children: const [
-                                          Icon(
-                                            Icons.check_circle,
-                                            color: Colors.greenAccent,
-                                          ),
-                                          SizedBox(width: 8),
-                                          Expanded(
-                                            child: Text(
-                                              'Novo preset criado! Adicione arquivos.',
-                                              style: TextStyle(fontSize: 16),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                  pickFiles(skipNameDialog: true);
+                                  // Já está selecionado automaticamente
                                 }
                               },
-                              child: Container(
-                                padding: const EdgeInsets.all(12),
-                                color: Colors.deepPurpleAccent,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: const [
-                                    Icon(Icons.add, color: Colors.white),
-                                    SizedBox(width: 8),
-                                    Text(
-                                      'Criar Preset',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                              icon: Icon(Icons.add, color: Colors.white),
+                              label: Text(
+                                'Criar Novo Preset',
+                                style: TextStyle(color: Colors.white),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.deepPurpleAccent,
                               ),
                             ),
                           ],
                         )
+                      : selectedFiles.isEmpty
+                      ? Center(
+                          // TELA QUANDO O PRESET ESTÁ VAZIO
+                          child: GestureDetector(
+                            onTap: pickFiles,
+                            child: Container(
+                              width: MediaQuery.of(context).size.width * 0.8,
+                              height: MediaQuery.of(context).size.height * 0.4,
+                              padding: EdgeInsets.all(24),
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [
+                                    Colors.deepPurple.withOpacity(0.7),
+                                    Colors.deepPurpleAccent.withOpacity(0.9),
+                                  ],
+                                ),
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.deepPurple.withOpacity(0.5),
+                                    blurRadius: 15,
+                                    spreadRadius: 2,
+                                    offset: Offset(0, 5),
+                                  ),
+                                ],
+                                border: Border.all(
+                                  color: Colors.deepPurpleAccent.withOpacity(
+                                    0.3,
+                                  ),
+                                  width: 2,
+                                ),
+                              ),
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.music_note,
+                                    size: 64,
+                                    color: Colors.white,
+                                  ),
+                                  SizedBox(height: 20),
+                                  Text(
+                                    'Preset "${_multitrackName}" está vazio',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  SizedBox(height: 10),
+                                  Text(
+                                    'Toque aqui para adicionar seus primeiros arquivos de áudio',
+                                    style: TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 16,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  SizedBox(height: 25),
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(12),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.3),
+                                          blurRadius: 10,
+                                          offset: Offset(0, 4),
+                                        ),
+                                      ],
+                                    ),
+                                    child: ElevatedButton(
+                                      onPressed: pickFiles,
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.white,
+                                        foregroundColor: Colors.deepPurple,
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: 30,
+                                          vertical: 15,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                      ),
+                                      child: Text(
+                                        'ADICIONAR ARQUIVOS',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        )
                       : PageView.builder(
                           controller: _pageController,
                           scrollDirection: Axis.horizontal,
-                          itemCount: selectedFiles.length,
+                          itemCount:
+                              selectedFiles.length +
+                              1, // +1 para o card de adicionar
                           itemBuilder: (context, index) {
+                            // Se for o último item (card de adicionar)
+                            if (index == selectedFiles.length) {
+                              return GestureDetector(
+                                onTap: addFile,
+                                child: Container(
+                                  width: 150,
+                                  margin: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                    vertical: 12,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.grey[850]!,
+                                        Colors.grey[900]!,
+                                      ],
+                                    ),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(
+                                      color: Colors.deepPurpleAccent
+                                          .withOpacity(0.5),
+                                      width: 2,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.5),
+                                        blurRadius: 12,
+                                        offset: Offset(0, 6),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.add_circle_outline,
+                                        size: 40,
+                                        color: Colors.deepPurpleAccent,
+                                      ),
+                                      SizedBox(height: 12),
+                                      Text(
+                                        'Adicionar\nMais Tracks',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: Colors.deepPurpleAccent,
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      SizedBox(height: 8),
+                                      Text(
+                                        'Toque para adicionar',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }
+
+                            // Código para renderizar as tracks normais
                             final file = selectedFiles[index];
                             final muted = isMutedList[index];
                             final pan = panValues[index];
@@ -3375,6 +3026,9 @@ class _MyAppState extends State<MyApp> {
                                         isMutedList.removeAt(index);
                                         panValues.removeAt(index);
                                         volumeValues.removeAt(index);
+                                        if (selectedIcons.length > index) {
+                                          selectedIcons.removeAt(index);
+                                        }
                                       });
                                     }
                                   } on PlatformException catch (e) {
@@ -3402,7 +3056,6 @@ class _MyAppState extends State<MyApp> {
                                       ],
                                     ),
                                     borderRadius: BorderRadius.circular(8),
-
                                     border: Border.all(
                                       color: _isPresetUnsaved
                                           ? Colors.orangeAccent.withOpacity(0.7)
@@ -3714,6 +3367,7 @@ class _MyAppState extends State<MyApp> {
                           },
                         ),
                 ),
+
                 if (selectedFiles.isNotEmpty)
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3770,6 +3424,9 @@ class _MyAppState extends State<MyApp> {
                             );
                             seekTo(seekPosition);
                             userIsSeeking = false;
+                            print(
+                              "Posição alterada para: ${formatDuration(seekPosition)}",
+                            );
                           },
                         ),
                       ),
@@ -3790,87 +3447,6 @@ class _MyAppState extends State<MyApp> {
                         ),
                       ),
                       SizedBox(height: 20),
-                      /*
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.green.withOpacity(0.3),
-                                  blurRadius: 6,
-                                  offset: Offset(0, 3),
-                                ),
-                              ],
-                            ),
-                            child: ElevatedButton.icon(
-                              onPressed: isPlaying ? pauseAll : playSelected,
-                              icon: Icon(
-                                isPlaying ? Icons.pause : Icons.play_arrow,
-                                size: 24,
-                              ),
-                              label: Text(
-                                isPlaying ? 'PAUSE' : 'PLAY',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                foregroundColor: Colors.white,
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 20,
-                                  vertical: 12,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                elevation: 0,
-                              ),
-                            ),
-                          ),
-          
-                          Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.red.withOpacity(
-                                    isPlaying ? 0.3 : 0,
-                                  ),
-                                  blurRadius: 6,
-                                  offset: Offset(0, 3),
-                                ),
-                              ],
-                            ),
-                            child: ElevatedButton.icon(
-                              onPressed: isPlaying ? stopAll : null,
-                              icon: Icon(Icons.stop, size: 24),
-                              label: Text(
-                                'STOP',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: isPlaying
-                                    ? Colors.redAccent
-                                    : Colors.grey[700],
-                                foregroundColor: Colors.white,
-                                padding: EdgeInsets.symmetric(
-                                  horizontal: 20,
-                                  vertical: 12,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                elevation: 0,
-                                disabledBackgroundColor: Colors.grey[800],
-                                disabledForegroundColor: Colors.grey[500],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    */
                     ],
                   ),
               ],

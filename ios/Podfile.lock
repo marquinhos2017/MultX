@@ -38,12 +38,12 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   file_selector_ios: f92e583d43608aebc2e4a18daac30b8902845502
-  Flutter: e0871f40cf51350855a761d2e70bf5af5b9b5de7
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   just_waveform: be2cb6dec86096cb972bf8b73c893fe16bf1cff4
   path_provider_foundation: 080d55be775b7414fd5a5ef3ac137b97b097e564
   permission_handler_apple: 4ed2196e43d0651e8ff7ca3483a069d469701f2d
   shared_preferences_foundation: 9e1978ff2562383bd5676f64ec4e9aa8fa06a6f7
 
-PODFILE CHECKSUM: 63a3916b52d39c8a77faafd1506089ef4f0573bd
+PODFILE CHECKSUM: 073a9ede5ac7fa4b79034c585d9a7c5e35ffe567
 
 COCOAPODS: 1.16.2
