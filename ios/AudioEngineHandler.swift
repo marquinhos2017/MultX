@@ -97,12 +97,13 @@ class AudioEngineHandler {
             seek(to: seconds)
             result(nil)
             
-        case "getAudioDuration":
-            guard let path = call.arguments as? String else {
-                result(FlutterError(code: "INVALID_ARGUMENTS", message: "path missing", details: nil))
-                return
-            }
-            result(getDuration(for: path))
+      case "getAudioDuration":
+    guard let args = call.arguments as? [String: Any],
+          let path = args["filePath"] as? String else {
+        result(FlutterError(code: "INVALID_ARGUMENTS", message: "filePath missing", details: nil))
+        return
+    }
+    result(getDuration(for: path))
             
         default:
             result(FlutterMethodNotImplemented)
@@ -229,16 +230,18 @@ class AudioEngineHandler {
         if wasPlaying { players.forEach { $0.play(at: startTime) } }
     }
 
-   func getDuration(for path: String) -> Double {
+  func getDuration(for path: String) -> Double {
     let url = URL(fileURLWithPath: path)
     do {
-        let file = try AVAudioFile(forReading: url)
-        return Double(file.length) / file.fileFormat.sampleRate
+        let asset = AVURLAsset(url: url)
+        let duration = asset.duration
+        let durationInSeconds = CMTimeGetSeconds(duration)
+        return durationInSeconds.isNaN ? 0 : durationInSeconds
     } catch {
+        print("Erro ao obter duração: \(error.localizedDescription)")
         return 0
     }
 }
-
 
     func removePlayer(index: Int) {
         guard players.indices.contains(index) else { return }

@@ -1,9 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:audio_pad/AudioMeter.dart';
+import 'package:audio_pad/AudioWaveForm.dart';
+import 'package:audio_pad/ImageSldierThumb.dart';
+import 'package:audio_pad/SplashScreen.dart';
 import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_media_metadata/flutter_media_metadata.dart';
 
 import 'dart:io';
 import 'dart:math';
@@ -12,145 +17,12 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:rxdart/rxdart.dart';
 import 'package:just_waveform/just_waveform.dart';
-import 'package:intl/intl.dart';
+//import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-class SplashScreen extends StatefulWidget {
-  @override
-  _SplashScreenState createState() => _SplashScreenState();
-}
-
-class _SplashScreenState extends State<SplashScreen> {
-  @override
-  void initState() {
-    super.initState();
-    // Simulate initialization process
-    Future.delayed(Duration(seconds: 4), () {
-      Navigator.of(
-        context,
-      ).pushReplacement(MaterialPageRoute(builder: (_) => MyApp()));
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            // App logo
-            Image.asset('assets/logo.png', width: 300, height: 300),
-            SizedBox(height: 20),
-            // Loading text
-            Text(
-              'Multitracks in Your Pocket',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            SizedBox(height: 20),
-            // Gradient blue loading indicator
-            Container(
-              width: 100,
-              height: 100,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  // Background circle
-                  Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.black.withOpacity(0.3),
-                    ),
-                  ),
-                  // Gradient rotating circle
-                  TweenAnimationBuilder<double>(
-                    tween: Tween(begin: 0.0, end: 1.0),
-                    duration: Duration(seconds: 4),
-                    curve: Curves.linear,
-                    builder: (context, value, child) {
-                      return Transform.rotate(
-                        angle: value * 2 * pi,
-                        child: child,
-                      );
-                    },
-                    child: Container(
-                      width: 80,
-                      height: 80,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: SweepGradient(
-                          colors: [
-                            Colors.blue.shade400,
-                            Colors.lightBlueAccent,
-                            Colors.blue.shade900,
-                            Colors.blue.shade400,
-                          ],
-                          stops: [0.0, 0.5, 0.9, 1.0],
-                        ),
-                      ),
-                    ),
-                  ),
-                  // Inner mask to create ring effect
-                  Container(
-                    width: 60,
-                    height: 60,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.black,
-                    ),
-                  ),
-                  // Pulsing dot
-                  TweenAnimationBuilder<double>(
-                    tween: Tween(begin: 0.5, end: 1.0),
-                    duration: Duration(seconds: 1),
-                    curve: Curves.easeInOut,
-                    builder: (context, value, child) {
-                      return Opacity(
-                        opacity: value,
-                        child: Transform.scale(
-                          scale: value,
-                          child: Container(
-                            width: 12,
-                            height: 12,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.lightBlueAccent,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.lightBlueAccent.withOpacity(
-                                    0.7,
-                                  ),
-                                  blurRadius: 10,
-                                  spreadRadius: 2,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                    onEnd: () {
-                      Future.delayed(Duration.zero, () {
-                        if (mounted) setState(() {});
-                      });
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+import 'dart:ui' as ui;
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 const platform = MethodChannel('com.example.audio_pad/audio');
 void main() {
@@ -216,6 +88,11 @@ class _MyAppState extends State<MyApp> {
         final existingJson = presets[_selectedPresetIndex!];
         final existingPreset = jsonDecode(existingJson) as Map<String, dynamic>;
         final existingFiles = List<String>.from(existingPreset['files'] ?? []);
+
+        // ADICIONE ESTA LINHA PARA GARANTIR QUE O PRESET CONTINUA SELECIONADO
+        setState(() {
+          _isPresetUnsaved = false;
+        });
 
         final List<String> newInternalPaths = [];
 
@@ -368,8 +245,9 @@ class _MyAppState extends State<MyApp> {
       await _loadSavedPresets();
 
       // Atualiza selectedFiles para refletir os arquivos do novo preset
-      selectedFiles = internalPaths.map((path) => XFile(path)).toList();
 
+      // GARANTIR QUE O ESTADO É ATUALIZADO CORRETAMENTE
+      // GARANTIR QUE O ESTADO É ATUALIZADO CORRETAMENTE
       final newIndex = savedPresets.indexWhere(
         (p) => p['id'] == newPreset['id'],
       );
@@ -378,133 +256,16 @@ class _MyAppState extends State<MyApp> {
             ? newIndex
             : savedPresets.length - 1;
         _isPresetUnsaved = false;
+        _multitrackName = name; // Atualiza o nome exibido
       });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Preset salvo com sucesso!')),
-        );
-      }
 
       return _selectedPresetIndex;
     } catch (e, st) {
       debugPrint('Erro ao salvar preset: $e\n$st');
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Erro ao salvar preset: $e')));
-      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erro ao salvar preset: $e')));
       return null;
-    }
-  }
-
-  Future<int?> saveCurrentPreseta() async {
-    // Se já tem um preset selecionado, usa o mesmo nome e ID
-    if (_selectedPresetIndex != null &&
-        _selectedPresetIndex! < savedPresets.length) {
-      final preset = savedPresets[_selectedPresetIndex!];
-
-      final List<String> internalPaths = [];
-      for (final file in selectedFiles) {
-        try {
-          final internalPath = await _copyFileToInternal(file);
-          internalPaths.add(internalPath);
-        } catch (e) {
-          return null; // Apenas cancela, sem pop ou snackbar
-        }
-      }
-
-      final updatedPreset = {
-        'id': preset['id'],
-        'name': preset['name'],
-        'files': internalPaths,
-        'panValues': panValues,
-        'volumeValues': volumeValues,
-        'isMutedList': isMutedList,
-        'selectedIcons': selectedIcons.length == selectedFiles.length
-            ? selectedIcons
-            : List.generate(selectedFiles.length, (i) => 'guitar.png'),
-        'timestamp': DateTime.now().toIso8601String(),
-      };
-
-      final prefs = await SharedPreferences.getInstance();
-      final presets = prefs.getStringList(_presetsKey) ?? [];
-
-      presets[_selectedPresetIndex!] = jsonEncode(updatedPreset);
-      await prefs.setStringList(_presetsKey, presets);
-      await _loadSavedPresets();
-
-      setState(() {});
-
-      return _selectedPresetIndex;
-    } else {
-      final nameController = TextEditingController(text: _multitrackName);
-
-      // Aguarda o nome sem dar pop automático
-      String? name;
-      await showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) {
-          return AlertDialog(
-            title: Text('Nome do Preset'),
-            content: TextField(controller: nameController, autofocus: true),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  name = null;
-                },
-                child: Text('Cancelar'),
-              ),
-              TextButton(
-                onPressed: () {
-                  name = nameController.text.isNotEmpty
-                      ? nameController.text
-                      : 'Novo Preset';
-                },
-                child: Text('Salvar'),
-              ),
-            ],
-          );
-        },
-      );
-
-      if (name == null) return null;
-
-      final List<String> internalPaths = [];
-      for (final file in selectedFiles) {
-        try {
-          final internalPath = await _copyFileToInternal(file);
-          internalPaths.add(internalPath);
-        } catch (e) {
-          return null; // Cancela silenciosamente
-        }
-      }
-
-      final preset = {
-        'id': _generateUniqueId(),
-        'name': name,
-        'files': internalPaths,
-        'panValues': panValues,
-        'volumeValues': volumeValues,
-        'isMutedList': isMutedList,
-        'selectedIcons': selectedIcons.length == selectedFiles.length
-            ? selectedIcons
-            : List.generate(selectedFiles.length, (i) => 'guitar.png'),
-        'timestamp': DateTime.now().toIso8601String(),
-      };
-
-      final prefs = await SharedPreferences.getInstance();
-      final presets = prefs.getStringList(_presetsKey) ?? [];
-      presets.add(jsonEncode(preset));
-      await prefs.setStringList(_presetsKey, presets);
-      await _loadSavedPresets();
-
-      setState(() {
-        _isPresetUnsaved = false; // Clear unsaved state
-      });
-
-      return savedPresets.length - 1;
     }
   }
 
@@ -606,43 +367,40 @@ class _MyAppState extends State<MyApp> {
                 ),
               ],
             ),
-            child: Builder(
-              builder: (context) {
-                return ElevatedButton.icon(
-                  onPressed: () async {
-                    final result = await saveCurrentPreset();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          result != null
-                              ? 'Preset salvo com sucesso!'
-                              : 'Erro ao salvar preset',
-                        ),
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                    if (result != null && mounted) {
-                      setState(() {
-                        _isPresetUnsaved = false;
-                      });
-                    }
-                  },
-                  icon: Icon(Icons.save),
-                  label: Text('SALVAR'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 12,
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                final result = await saveCurrentPreset();
+                if (result != null && mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Preset salvo com sucesso!'),
+                      duration: Duration(seconds: 2),
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                  );
+                  // Não navegue para lugar nenhum - mantenha na mesma tela
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Erro ao salvar preset'),
+                      duration: Duration(seconds: 2),
                     ),
-                    elevation: 0,
-                  ),
-                );
+                  );
+                }
               },
+              icon: Icon(Icons.save),
+              label: Text('SALVAR'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                elevation: 0,
+              ),
             ),
           ),
         ],
@@ -967,18 +725,6 @@ class _MyAppState extends State<MyApp> {
   }
 
   // Adicione este método para salvar automaticamente
-  Future<void> _autoSavePreset() async {
-    if (_selectedPresetIndex == null || selectedFiles.isEmpty) return;
-
-    try {
-      await saveCurrentPreset();
-      setState(() {
-        _isPresetUnsaved = false;
-      });
-    } catch (e) {
-      debugPrint('Erro no salvamento automático: $e');
-    }
-  }
 
   Future<void> loadPresetWithDelay(int index, BuildContext oldContext) async {
     // Captura o contexto da tela principal antes de fechar o popup
@@ -1027,9 +773,7 @@ class _MyAppState extends State<MyApp> {
         ),
       );
 
-      if (confirm != true) {
-        return; // Usuário cancelou
-      }
+      if (confirm != true) return;
     }
     if (index < 0 || index >= savedPresets.length) return;
 
@@ -1075,6 +819,7 @@ class _MyAppState extends State<MyApp> {
       );
 
       // Atualizar estado
+      // Atualizar estado
       setState(() {
         _multitrackName = fullPreset['name'];
         selectedFiles = validFiles;
@@ -1086,6 +831,9 @@ class _MyAppState extends State<MyApp> {
         isPlaying = false;
         _selectedPresetIndex = index;
       });
+
+      // Atualiza a duração máxima após carregar o preset
+      await _updateMaxDuration();
 
       // Configurar players nativos
       for (int i = 0; i < validFiles.length; i++) {
@@ -1320,9 +1068,7 @@ class _MyAppState extends State<MyApp> {
                                             ),
                                             const SizedBox(height: 4),
                                             Text(
-                                              DateFormat(
-                                                'dd/MM/yyyy',
-                                              ).format(timestamp),
+                                              timestamp.toString(),
                                               style: TextStyle(
                                                 color: Colors.grey[600],
                                                 fontSize: 12,
@@ -1739,6 +1485,44 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
+  // Adicione esta variável
+  Duration _maxDuration = Duration.zero;
+
+  // Atualize o método para obter a duração máxima
+  Future<void> _updateMaxDuration() async {
+    if (selectedFiles.isEmpty) {
+      setState(() {
+        _maxDuration = Duration.zero;
+      });
+      return;
+    }
+
+    Duration max = Duration.zero;
+
+    for (final file in selectedFiles) {
+      try {
+        final durationInSeconds =
+            await platform.invokeMethod('getAudioDuration', {
+                  'filePath': file.path,
+                })
+                as double;
+
+        final duration = Duration(
+          milliseconds: (durationInSeconds * 1000).round(),
+        );
+        if (duration > max) {
+          max = duration;
+        }
+      } catch (e) {
+        print('Erro ao obter duração para ${file.path}: $e');
+      }
+    }
+
+    setState(() {
+      _maxDuration = max;
+    });
+  }
+
   Future<void> setPlayerVolume(int index, double volume) async {
     print('Setting volume - index: $index, volume: $volume');
     try {
@@ -1832,6 +1616,9 @@ class _MyAppState extends State<MyApp> {
       _isPresetUnsaved = true;
     });
 
+    // Atualiza a duração máxima
+    await _updateMaxDuration();
+
     try {
       final newIndex = selectedFiles.length - 1;
 
@@ -1867,7 +1654,7 @@ class _MyAppState extends State<MyApp> {
       if (!userIsSeeking && isPlaying) {
         setState(() {
           currentPosition += const Duration(milliseconds: 100);
-          if (currentPosition >= maxDuration) {
+          if (currentPosition >= _maxDuration) {
             _timer?.cancel();
             isPlaying = false;
             currentPosition = Duration.zero;
@@ -1885,6 +1672,9 @@ class _MyAppState extends State<MyApp> {
     }
 
     try {
+      // Atualiza a duração máxima antes de iniciar a reprodução
+      await _updateMaxDuration();
+
       final startPosition = startFromBeginning
           ? 0.0
           : currentPosition.inMilliseconds.toDouble() / 1000.0;
@@ -1941,9 +1731,24 @@ class _MyAppState extends State<MyApp> {
 
   List<String> selectedIcons = [];
 
+  Future<ui.Image> loadImage(String asset) async {
+    final data = await rootBundle.load(asset);
+    final bytes = data.buffer.asUint8List();
+    final codec = await ui.instantiateImageCodec(bytes);
+    final frame = await codec.getNextFrame();
+    return frame.image;
+  }
+
+  late ui.Image thumbImage;
   @override
   void initState() {
     super.initState();
+
+    loadImage('assets/thumb.png').then((img) {
+      setState(() {
+        thumbImage = img;
+      });
+    });
     _init();
     _updateDateTime();
     _timera = Timer.periodic(
@@ -1969,6 +1774,40 @@ class _MyAppState extends State<MyApp> {
           _currentPage = _pageController.page!;
         });
       });
+
+    // Verifique se há um preset selecionado ao iniciar
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_selectedPresetIndex == null && selectedFiles.isNotEmpty) {
+        // Se há arquivos mas nenhum preset selecionado, ofereça para salvar
+        _showSavePrompt();
+      }
+    });
+  }
+
+  Future<void> _showSavePrompt() async {
+    final shouldSave = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Preset não salvo'),
+        content: Text(
+          'Deseja salvar as alterações atuais como um novo preset?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Salvar'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldSave == true) {
+      await saveCurrentPreset();
+    }
   }
 
   Future<void> _cleanupOrphanedAudioFiles() async {
@@ -2001,6 +1840,7 @@ class _MyAppState extends State<MyApp> {
         selectedIcons = [];
         currentPosition = Duration.zero;
         isPlaying = false;
+        _maxDuration = Duration.zero; // Reset da duração máxima
         _multitrackName = "Untitled Multitrack";
       });
     } on PlatformException catch (e) {
@@ -2323,6 +2163,26 @@ class _MyAppState extends State<MyApp> {
   // And in the build() method, replace the floatingActionButton section with:
 
   bool isSelected = true;
+
+  Future<Object> getRealAudioDuration(String filePath) async {
+    try {
+      final durationInSeconds =
+          await platform.invokeMethod('getAudioDuration', {
+                'filePath': filePath,
+              })
+              as double;
+
+      return Duration(milliseconds: (durationInSeconds * 1000).round());
+    } on PlatformException catch (e) {
+      print('Erro ao obter duração: ${e.message}');
+
+      // Fallback: usar metadados do arquivo
+      final file = File(filePath);
+      final metadata = await MetadataRetriever.fromFile(file);
+      return metadata.trackDuration ?? Duration.zero;
+    }
+  }
+
   Future<double> getAudioDuration(String filePath) async {
     try {
       final duration = await platform.invokeMethod(
@@ -2348,8 +2208,8 @@ class _MyAppState extends State<MyApp> {
         secondary: Colors.deepPurpleAccent,
       ),
       sliderTheme: SliderThemeData(
-        activeTrackColor: Colors.deepPurpleAccent,
-        inactiveTrackColor: Colors.white24,
+        activeTrackColor: const Color.fromARGB(255, 0, 0, 0),
+        inactiveTrackColor: const Color.fromARGB(59, 86, 86, 86),
         thumbColor: Colors.deepPurpleAccent,
         overlayColor: Colors.deepPurpleAccent.withOpacity(0.2),
       ),
@@ -2388,38 +2248,6 @@ class _MyAppState extends State<MyApp> {
         hintStyle: TextStyle(color: Colors.white54),
       ),
     );
-
-    Widget _buildEmptyPreset() {
-      return Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            'Preset "${_multitrackName}" está vazio',
-            style: TextStyle(color: Colors.white70, fontSize: 16),
-          ),
-          SizedBox(height: 20),
-          ElevatedButton.icon(
-            onPressed: pickFiles,
-            icon: Icon(Icons.add),
-            label: Text('Adicionar Arquivos'),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-          ),
-          SizedBox(height: 10),
-          Text('ou', style: TextStyle(color: Colors.white54)),
-          SizedBox(height: 10),
-          TextButton(
-            onPressed: () {
-              setState(() {
-                _selectedPresetIndex = null;
-              });
-
-              // Novos métodos para construir as diferentes views:
-            },
-            child: Text('Selecionar outro preset'),
-          ),
-        ],
-      );
-    }
 
     return MaterialApp(
       scaffoldMessengerKey: scaffoldMessengerKey,
@@ -2754,7 +2582,7 @@ class _MyAppState extends State<MyApp> {
                             child: AudioWaveformWidget(
                               waveform: waveform,
                               start: Duration.zero,
-                              duration: maxDuration,
+                              duration: _maxDuration, // Use _maxDuration aqui
                               currentPosition: currentPosition,
                               onSeek: (duration) {
                                 userIsSeeking = true;
@@ -2770,36 +2598,38 @@ class _MyAppState extends State<MyApp> {
                   ),
                 Expanded(
                   child: _selectedPresetIndex == null
-                      ? Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.center,
-                          children: [
-                            Text(
-                              'Bem vindo ao MultX',
-                              style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 14,
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Text(
+                                'Bem vindo ao MultX',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 14,
+                                ),
+                                textAlign: TextAlign.center,
                               ),
-                              textAlign: TextAlign.center,
-                            ),
-                            SizedBox(height: 20),
-                            ElevatedButton.icon(
-                              onPressed: () async {
-                                final index = await createBlankPreset();
-                                if (index != null && mounted) {
-                                  // Já está selecionado automaticamente
-                                }
-                              },
-                              icon: Icon(Icons.add, color: Colors.white),
-                              label: Text(
-                                'Criar Novo Preset',
-                                style: TextStyle(color: Colors.white),
+                              SizedBox(height: 20),
+                              ElevatedButton.icon(
+                                onPressed: () async {
+                                  final index = await createBlankPreset();
+                                  if (index != null && mounted) {
+                                    // Já está selecionado automaticamente
+                                  }
+                                },
+                                icon: Icon(Icons.add, color: Colors.white),
+                                label: Text(
+                                  'Criar Novo Preset',
+                                  style: TextStyle(color: Colors.white),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.deepPurpleAccent,
+                                ),
                               ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.deepPurpleAccent,
-                              ),
-                            ),
-                          ],
+                            ],
+                          ),
                         )
                       : selectedFiles.isEmpty
                       ? Center(
@@ -2980,7 +2810,7 @@ class _MyAppState extends State<MyApp> {
                             final file = selectedFiles[index];
                             final muted = isMutedList[index];
                             final pan = panValues[index];
-                            final volume = volumeValues[index];
+                            double volume = volumeValues[index];
                             final scale = (1 - (_currentPage - index).abs())
                                 .clamp(0.95, 1.1);
 
@@ -3178,37 +3008,40 @@ class _MyAppState extends State<MyApp> {
                                                     height: 60,
                                                   ),
                                                   SizedBox(width: 8),
-                                                  RotatedBox(
-                                                    quarterTurns: 3,
-                                                    child: SliderTheme(
-                                                      data: SliderThemeData(
-                                                        trackHeight: 12,
-                                                        thumbShape:
-                                                            RoundSliderThumbShape(
-                                                              enabledThumbRadius:
-                                                                  6,
-                                                            ),
-                                                        activeTrackColor:
-                                                            Colors.blueAccent,
-                                                        inactiveTrackColor:
-                                                            Colors.grey[700],
-                                                        thumbColor:
-                                                            Colors.white,
-                                                        overlayColor: Colors
-                                                            .blue
-                                                            .withOpacity(0.2),
+                                                  Stack(
+                                                    alignment:
+                                                        Alignment.centerLeft,
+                                                    children: [
+                                                      RotatedBox(
+                                                        quarterTurns:
+                                                            3, // deixa o slider vertical
+                                                        child: SliderTheme(
+                                                          data:
+                                                              SliderTheme.of(
+                                                                context,
+                                                              ).copyWith(
+                                                                trackHeight: 12,
+                                                                thumbShape:
+                                                                    ImageSliderThumb(
+                                                                      size: 48,
+                                                                      image:
+                                                                          thumbImage!,
+                                                                    ),
+                                                              ),
+                                                          child: Slider(
+                                                            value: volume,
+                                                            min: 0.0,
+                                                            max: 1.0,
+                                                            onChanged: (value) {
+                                                              setState(() {
+                                                                volumeValues[index] =
+                                                                    value; // <-- atualização correta
+                                                              });
+                                                            },
+                                                          ),
+                                                        ),
                                                       ),
-                                                      child: Slider(
-                                                        value: volume,
-                                                        min: 0.0,
-                                                        max: 1.0,
-                                                        onChanged: (value) =>
-                                                            setPlayerVolume(
-                                                              index,
-                                                              value,
-                                                            ),
-                                                      ),
-                                                    ),
+                                                    ],
                                                   ),
                                                 ],
                                               ),
@@ -3406,9 +3239,9 @@ class _MyAppState extends State<MyApp> {
                         ),
                         child: Slider(
                           min: 0,
-                          max: maxDuration.inMilliseconds.toDouble(),
+                          max: _maxDuration.inMilliseconds.toDouble(),
                           value: currentPosition.inMilliseconds
-                              .clamp(0, maxDuration.inMilliseconds)
+                              .clamp(0, _maxDuration.inMilliseconds)
                               .toDouble(),
                           onChanged: (value) {
                             setState(() {
@@ -3440,7 +3273,7 @@ class _MyAppState extends State<MyApp> {
                               style: TextStyle(color: Colors.white70),
                             ),
                             Text(
-                              formatDuration(maxDuration),
+                              formatDuration(_maxDuration),
                               style: TextStyle(color: Colors.white70),
                             ),
                           ],
@@ -3455,174 +3288,6 @@ class _MyAppState extends State<MyApp> {
         ),
       ),
     );
-  }
-}
-
-class AudioWaveformWidget extends StatefulWidget {
-  final Color waveColor;
-  final double scale;
-  final double strokeWidth;
-  final double pixelsPerStep;
-  final Waveform waveform;
-  final Duration start;
-  final Duration duration;
-  final Duration currentPosition;
-  final ValueChanged<Duration> onSeek;
-
-  const AudioWaveformWidget({
-    Key? key,
-    required this.waveform,
-    required this.start,
-    required this.duration,
-    required this.currentPosition,
-    required this.onSeek,
-    this.waveColor = const Color.fromARGB(255, 0, 0, 0),
-    this.scale = 1,
-    this.strokeWidth = 5.0,
-    this.pixelsPerStep = 8.0,
-  }) : super(key: key);
-
-  @override
-  State<AudioWaveformWidget> createState() => _AudioWaveformState();
-}
-
-class _AudioWaveformState extends State<AudioWaveformWidget> {
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (details) {
-        final tapX = details.localPosition.dx;
-        final width = context.size!.width;
-        final tappedDuration = widget.duration * (tapX / width);
-        widget.onSeek(tappedDuration);
-      },
-      onHorizontalDragUpdate: (details) {
-        final dragX = details.localPosition.dx;
-        final width = context.size!.width;
-        final draggedDuration = widget.duration * (dragX / width);
-        widget.onSeek(draggedDuration);
-      },
-      child: SizedBox(
-        height: 200, // ou o valor que preferir
-        width: double.infinity,
-        child: CustomPaint(
-          painter: AudioWaveformPainter(
-            waveColor: widget.waveColor,
-            waveform: widget.waveform,
-            start: widget.start,
-            duration: widget.duration,
-            scale: widget.scale,
-            strokeWidth: widget.strokeWidth,
-            pixelsPerStep: widget.pixelsPerStep,
-            currentPosition: widget.currentPosition,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class AudioWaveformPainter extends CustomPainter {
-  final double scale;
-  final double strokeWidth;
-  final double pixelsPerStep;
-  final Paint wavePaint;
-  final Waveform waveform;
-  final Duration start;
-  final Duration duration;
-  final Duration currentPosition; // <- Campo adicionado
-
-  AudioWaveformPainter({
-    required this.waveform,
-    required this.start,
-    required this.duration,
-    required this.currentPosition, // <- Incluído corretamente aqui
-    Color waveColor = const Color.fromARGB(255, 0, 0, 0),
-    this.scale = 1.0,
-    this.strokeWidth = 5.0,
-    this.pixelsPerStep = 8.0,
-  }) : wavePaint = Paint()
-         ..style = PaintingStyle.stroke
-         ..strokeWidth = strokeWidth
-         ..strokeCap = StrokeCap.round
-         ..color = waveColor;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final width = size.width;
-    final height = size.height;
-
-    // Fundo preto elegante
-    final backgroundPaint = Paint()..color = const Color(0xFF121212);
-    canvas.drawRect(Rect.fromLTWH(0, 0, width, height), backgroundPaint);
-
-    // Gradiente no waveform (desenha primeiro)
-    final gradient = LinearGradient(
-      colors: [
-        const Color.fromARGB(255, 83, 83, 83),
-        const Color.fromARGB(255, 59, 59, 59),
-      ],
-    ).createShader(Rect.fromLTWH(0, 0, width, height));
-
-    final wavePaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round
-      ..shader = gradient;
-
-    final waveformPixelsPerWindow = waveform.positionToPixel(duration).toInt();
-    final waveformPixelsPerDevicePixel = waveformPixelsPerWindow / width;
-    final waveformPixelsPerStep = waveformPixelsPerDevicePixel * pixelsPerStep;
-    final sampleOffset = waveform.positionToPixel(start);
-    final sampleStart = -sampleOffset % waveformPixelsPerStep;
-
-    for (
-      var i = sampleStart.toDouble();
-      i <= waveformPixelsPerWindow + 1.0;
-      i += waveformPixelsPerStep
-    ) {
-      final sampleIdx = (sampleOffset + i).toInt();
-      final x = i / waveformPixelsPerDevicePixel;
-      final minY = normalise(waveform.getPixelMin(sampleIdx), height);
-      final maxY = normalise(waveform.getPixelMax(sampleIdx), height);
-      canvas.drawLine(
-        Offset(x + strokeWidth / 2, max(strokeWidth * 0.75, minY)),
-        Offset(x + strokeWidth / 2, min(height - strokeWidth * 0.75, maxY)),
-        wavePaint,
-      );
-    }
-
-    // Agora desenha o cursor branco por cima do waveform
-    final positionFraction =
-        (currentPosition.inMilliseconds / duration.inMilliseconds).clamp(
-          0.0,
-          1.0,
-        );
-    final cursorX = positionFraction * width;
-
-    final cursorPaint = Paint()
-      ..color = Colors.white
-      ..strokeWidth = 2;
-
-    canvas.drawLine(Offset(cursorX, 0), Offset(cursorX, height), cursorPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant AudioWaveformPainter oldDelegate) {
-    return oldDelegate.currentPosition != currentPosition ||
-        oldDelegate.duration != duration ||
-        oldDelegate.start != start;
-  }
-
-  double normalise(int s, double height) {
-    if (waveform.flags == 0) {
-      final y = 32768 + (scale * s).clamp(-32768.0, 32767.0).toDouble();
-      return height - 1 - y * height / 65536;
-    } else {
-      final y = 128 + (scale * s).clamp(-128.0, 127.0).toDouble();
-      return height - 1 - y * height / 256;
-    }
   }
 }
 
@@ -3705,105 +3370,6 @@ class PresetButton extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class AudioMeter extends StatefulWidget {
-  final int index;
-  final double height;
-
-  const AudioMeter({Key? key, required this.index, this.height = 40})
-    : super(key: key);
-
-  @override
-  _AudioMeterState createState() => _AudioMeterState();
-}
-
-class _AudioMeterState extends State<AudioMeter> with TickerProviderStateMixin {
-  late AnimationController _animationController;
-  double _currentLevel = 0.0;
-  Timer? _levelTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    _animationController = AnimationController(
-      vsync: this,
-      duration: Duration(milliseconds: 100),
-    );
-    _startLevelUpdates();
-  }
-
-  void _startLevelUpdates() async {
-    const platform = MethodChannel('com.example.audio_pad/audio');
-
-    _levelTimer = Timer.periodic(Duration(milliseconds: 50), (timer) async {
-      try {
-        /*
-        final level = await platform.invokeMethod('getPlayerLevel', {
-          'index': widget.index,
-        });
-        if (mounted) {
-          setState(() {
-            _currentLevel = (level as double).clamp(0.0, 1.0);
-          });
-          _animationController.forward(from: 0.0);
-        }*/
-      } catch (e) {
-        print('Error getting audio level: $e');
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _levelTimer?.cancel();
-    _animationController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: widget.height,
-      width: 8,
-      decoration: BoxDecoration(
-        color: Colors.grey[800],
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            bottom: 0,
-            left: 0,
-            right: 0,
-            child: AnimatedBuilder(
-              animation: _animationController,
-              builder: (context, child) {
-                return Container(
-                  height: _currentLevel * widget.height,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        _currentLevel > 0.9
-                            ? Colors.red
-                            : _currentLevel > 0.7
-                            ? Colors.yellow
-                            : Colors.green,
-                        Colors.greenAccent,
-                      ],
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                    ),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
       ),
     );
   }

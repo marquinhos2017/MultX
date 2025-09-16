@@ -1,4 +1,4 @@
-funcionado com tudo salvnado bem direito, so mais alguns ajustes
+//funcionado com tudo salvnado bem direito, so mais alguns ajustes
 
 import 'dart:async';
 import 'dart:convert';
