@@ -3,7 +3,9 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  cloud_firestore
   file_selector_windows
+  firebase_core
   flutter_media_metadata
   permission_handler_windows
 )

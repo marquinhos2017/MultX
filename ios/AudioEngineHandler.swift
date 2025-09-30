@@ -2,6 +2,8 @@ import AVFoundation
 import Flutter
 
 class AudioEngineHandler {
+    var pitchUnits: [AVAudioUnitTimePitch] = []
+
     var engine = AVAudioEngine()
     var players: [AVAudioPlayerNode] = []
     var audioFiles: [AVAudioFile] = []
@@ -13,15 +15,18 @@ class AudioEngineHandler {
         configureAudioSession()
     }
 
-    private func configureAudioSession() {
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default)
-            try session.setActive(true)
-        } catch {
-            print("AVAudioSession error: \(error.localizedDescription)")
-        }
+   private func configureAudioSession() {
+    do {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, 
+                               mode: .default, 
+                               options: [.mixWithOthers, .allowAirPlay, .allowBluetooth])
+        try session.setActive(true, options: .notifyOthersOnDeactivation)
+        print("✅ Sessão de áudio configurada com sucesso")
+    } catch {
+        print("❌ AVAudioSession error: \(error.localizedDescription)")
     }
+}
 
     func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
@@ -36,6 +41,16 @@ class AudioEngineHandler {
         case "resumeSounds":
             resume()
             result(nil)
+
+             case "setPitch":  // ADD THIS CASE
+        guard let args = call.arguments as? [String: Any],
+              let index = args["index"] as? Int,
+              let pitch = args["pitch"] as? Double else {
+            result(FlutterError(code: "INVALID_ARGUMENTS", message: "index or pitch missing", details: nil))
+            return
+        }
+        setPitch(index: index, pitch: Float(pitch))
+        result(nil)
             
         case "removePlayer":
             guard let args = call.arguments as? [String: Any],
@@ -46,16 +61,22 @@ class AudioEngineHandler {
             removePlayer(index: index)
             result(nil)
             
-        case "playUploadedSounds":
-            guard let args = call.arguments as? [String: Any],
-                  let filePaths = args["filePaths"] as? [String],
-                  let pans = args["pans"] as? [Double],
-                  let volumes = args["volumes"] as? [Double],
-                  let startPosition = args["startPosition"] as? Double else {
-                result(FlutterError(code: "INVALID_ARGUMENTS", message: "Missing arguments", details: nil))
-                return
-            }
-            playSounds(paths: filePaths, pansFromFlutter: pans, volumesFromFlutter: volumes, startPosition: startPosition, result: result)
+       case "playUploadedSounds":
+    guard let args = call.arguments as? [String: Any],
+          let filePaths = args["filePaths"] as? [String],
+          let pans = args["pans"] as? [Double],
+          let volumes = args["volumes"] as? [Double],
+          let pitchValues = args["pitchValues"] as? [Double],
+          let startPosition = args["startPosition"] as? Double else {
+        result(FlutterError(code: "INVALID_ARGUMENTS", message: "Missing arguments", details: nil))
+        return
+    }
+    playSounds(paths: filePaths, 
+               pansFromFlutter: pans, 
+               volumesFromFlutter: volumes, 
+               pitchValuesFromFlutter: pitchValues, // Passe os pitch values
+               startPosition: startPosition, 
+               result: result)
             
         case "setPlayerPan":
     guard let args = call.arguments as? [String: Any],
@@ -112,30 +133,48 @@ class AudioEngineHandler {
 
     // MARK: - Audio Playback Methods
 
-    func playSounds(paths: [String], pansFromFlutter: [Double], volumesFromFlutter: [Double], startPosition: Double, result: FlutterResult) {
-        stop()
-        engine = AVAudioEngine()
-        players = []
-        audioFiles = []
-        self.volumes = volumesFromFlutter.map { Float($0) }
-        self.pans = pansFromFlutter.map { Float($0) }
-        
-        print("🔄 Carregando arquivos a partir de \(startPosition) segundos...")
-        
-        for path in paths {
-            let url = URL(fileURLWithPath: path)
-            do {
-                let file = try AVAudioFile(forReading: url)
-                let player = AVAudioPlayerNode()
-                engine.attach(player)
-                engine.connect(player, to: engine.mainMixerNode, format: file.processingFormat)
-                players.append(player)
-                audioFiles.append(file)
-            } catch {
-                result(FlutterError(code: "AUDIO_ERROR", message: "Failed to load audio", details: error.localizedDescription))
-                return
-            }
+func playSounds(paths: [String], 
+                pansFromFlutter: [Double], 
+                volumesFromFlutter: [Double], 
+                pitchValuesFromFlutter: [Double],
+                startPosition: Double, 
+                result: FlutterResult) {
+    stop()
+    engine = AVAudioEngine()
+    players = []
+    audioFiles = []
+    pitchUnits = []
+    self.volumes = volumesFromFlutter.map { Float($0) }
+    self.pans = pansFromFlutter.map { Float($0) }
+    
+    print("🔄 Loading files from \(startPosition) seconds...")
+    
+    for (index, path) in paths.enumerated() {
+        let url = URL(fileURLWithPath: path)
+        do {
+            let file = try AVAudioFile(forReading: url)
+            let player = AVAudioPlayerNode()
+            let pitchUnit = AVAudioUnitTimePitch()
+            
+            // Aplique o pitch value correspondente (se disponível)
+            let pitchValue = index < pitchValuesFromFlutter.count ? 
+                Float(pitchValuesFromFlutter[index]) : 0.0
+            pitchUnit.pitch = pitchValue
+
+            engine.attach(player)
+            engine.attach(pitchUnit)
+            
+            engine.connect(player, to: pitchUnit, format: file.processingFormat)
+            engine.connect(pitchUnit, to: engine.mainMixerNode, format: file.processingFormat)
+            
+            players.append(player)
+            audioFiles.append(file)
+            pitchUnits.append(pitchUnit)
+        } catch {
+            result(FlutterError(code: "AUDIO_ERROR", message: "Failed to load audio", details: error.localizedDescription))
+            return
         }
+    }
         
         do {
             try engine.start()
@@ -168,12 +207,30 @@ class AudioEngineHandler {
         }
     }
 
-    func resume() {
-        if !engine.isRunning {
-            do { try engine.start() } catch { print("❌ Erro ao reiniciar engine: \(error.localizedDescription)"); return }
+func setPitch(index: Int, pitch: Float) {
+    guard index < pitchUnits.count else { return }
+    pitchUnits[index].pitch = pitch // valor em centavos (-2400 a 2400, onde 100 cent = 1 semitom)
+}
+
+
+ func resume() {
+    if !engine.isRunning {
+        do { 
+            try engine.start() 
+            // Reaplicar os pitches após reiniciar o engine
+            for (index, pitchUnit) in pitchUnits.enumerated() {
+                // Mantenha os valores de pitch atuais
+                // (Se você quiser manter os últimos valores aplicados)
+            }
+        } catch { 
+            print("❌ Erro ao reiniciar engine: \(error.localizedDescription)"); 
+            return 
         }
-        for player in players where !player.isPlaying { player.play() }
     }
+    for player in players where !player.isPlaying { 
+        player.play() 
+    }
+}
 
     func stop() {
         players.forEach { $0.stop() }

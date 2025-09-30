@@ -2054,17 +2054,6 @@ class _MyAppState extends State<MyApp> {
                             itemCount: savedPresets.length,
                             itemBuilder: (context, index) {
                               final preset = savedPresets[index];
-                              String rawName = preset['name'];
-
-                              // Remove a parte da data e do timestamp
-                              List<String> parts = rawName.split('_');
-
-                              // Pega tudo após o timestamp (a partir do índice 1)
-                              String formattedName = parts
-                                  .sublist(1)
-                                  .join(' ')
-                                  .replaceAll('_', ' ');
-                              print(formattedName);
                               final isInPlaylist = _selectedPresetsIndices
                                   .contains(index);
 
@@ -2116,7 +2105,7 @@ class _MyAppState extends State<MyApp> {
                                     ),
                                   ),
                                   title: Text(
-                                    formattedName,
+                                    preset['name'],
                                     style: const TextStyle(
                                       color: Colors.white,
                                       fontWeight: FontWeight.bold,
@@ -2896,6 +2885,306 @@ class _MyAppState extends State<MyApp> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 SizedBox(height: 20),
+                // Primeiro, importe para lidar com imagens de arquivos (opcional)
+                /*     SizedBox(
+                  height: 200,
+                  child: PageView.builder(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: folders.length,
+                    controller: PageController(viewportFraction: 0.25),
+                    itemBuilder: (context, index) {
+                      final Map<String, String> albumCovers = {
+                        'Quem é esse':
+                            'https://i.ytimg.com/vi/OOBp_zZ3AI4/hq720.jpg?sqp=-oaymwEhCK4FEIIDSFryq4qpAxMIARUAAAAAGAElAADIQj0AgKJD&rs=AOn4CLCUK29T0bvgYw3OiGoBho3fYrA69g',
+                        'Vitorioso és':
+                            'https://cdn-images.dzcdn.net/images/cover/ac66a0f55d9cb33fcc446bc26a451bc1/1900x1900-000000-80-0-0.jpg',
+                        'A':
+                            'https://cdn-images.dzcdn.net/images/cover/ac66a0f55d9cb33fcc446bc26a451bc1/1900x1900-000000-80-0-0.jpg',
+                      };
+
+                      // Verifica se a pasta já tem preset salvo
+                      final existingIndex = savedPresets.indexWhere(
+                        (preset) => preset['name'] == folders[index],
+                      );
+
+                      final isDownloaded = existingIndex != -1;
+                      final isSelected =
+                          _selectedPresetIndex != null &&
+                          _selectedPresetIndex == existingIndex;
+
+                      return Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: GestureDetector(
+                          onTap: () async {
+                            if (isDownloaded) {
+                              // Já existe, apenas carrega
+                              await loadPreset(existingIndex, context);
+                              return;
+                            }
+
+                            // Modal de confirmação antes de criar novo preset
+                            final confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: Text("Criar Preset"),
+                                content: Text(
+                                  "Deseja criar um novo preset para a pasta '${folders[index]}'?",
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(context, false),
+                                    child: Text("Cancelar"),
+                                  ),
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(context, true),
+                                    child: Text("Confirmar"),
+                                  ),
+                                ],
+                              ),
+                            );
+
+                            if (confirm != true) return; // Usuário cancelou
+
+                            // Se não existe, cria e salva o preset
+                            Directory appDir =
+                                await getApplicationDocumentsDirectory();
+                            Directory folderDir = Directory(
+                              '${appDir.path}/downloaded/${folders[index]}',
+                            );
+
+                            final presetIndex = await createPresetFromFolder(
+                              folders[index],
+                            );
+                            if (presetIndex == null || !mounted) return;
+
+                            List<FileSystemEntity> allFiles = folderDir
+                                .listSync();
+                            List<XFile> audioFiles = allFiles
+                                .whereType<File>()
+                                .where(
+                                  (file) =>
+                                      ['mp3', 'wav', 'm4a', 'aac'].contains(
+                                        file.path.split('.').last.toLowerCase(),
+                                      ),
+                                )
+                                .map((file) => XFile(file.path))
+                                .toList();
+
+                            if (audioFiles.isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Não há arquivos de áudio nesta pasta',
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+
+                            setState(() {
+                              selectedFiles = audioFiles;
+                              isMutedList = List.generate(
+                                audioFiles.length,
+                                (_) => false,
+                              );
+                              panValues = List.generate(
+                                audioFiles.length,
+                                (_) => 0.0,
+                              );
+                              volumeValues = List.generate(
+                                audioFiles.length,
+                                (_) => 0.7,
+                              );
+                              currentPitchValues = List.generate(
+                                audioFiles.length,
+                                (_) => 0.0,
+                              ); // inicializa pitch
+                              globalPitch = 0.0; // inicializa pitch global
+                              currentPosition = Duration.zero;
+                              isPlaying = false;
+                              _selectedPresetIndex = presetIndex;
+                            });
+
+                            // APLICA O PITCH A TODOS OS PLAYERS
+                            for (
+                              int i = 0;
+                              i < currentPitchValues.length;
+                              i++
+                            ) {
+                              await setPlayerPitch(i, currentPitchValues[i]);
+                            }
+
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                backgroundColor: Colors.green,
+                                content: Text(
+                                  '${audioFiles.length} arquivo(s) adicionad${audioFiles.length > 1 ? 'os' : 'o'}',
+                                ),
+                                duration: Duration(seconds: 2),
+                              ),
+                            );
+
+                            await _updateMaxDuration();
+                            await saveCurrentPreset();
+                          },
+                          onLongPress: () async {
+                            bool? confirm = await showDialog<bool>(
+                              context: context,
+                              builder: (context) => AlertDialog(
+                                title: Text("Excluir pasta"),
+                                content: Text(
+                                  "Deseja realmente excluir a pasta '${folders[index]}'?",
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(context, false),
+                                    child: Text("Cancelar"),
+                                  ),
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(context, true),
+                                    child: Text(
+                                      "Excluir",
+                                      style: TextStyle(color: Colors.red),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+
+                            if (confirm == true) {
+                              Directory appDir =
+                                  await getApplicationDocumentsDirectory();
+                              Directory folderDir = Directory(
+                                '${appDir.path}/downloaded/${folders[index]}', // <- corrige o caminho
+                              );
+
+                              if (await folderDir.exists()) {
+                                await folderDir.delete(recursive: true);
+                              }
+
+                              // === Excluir preset correspondente ===
+                              final prefs =
+                                  await SharedPreferences.getInstance();
+                              final presets =
+                                  prefs.getStringList(_presetsKey) ?? [];
+                              final updatedPresets = presets.where((
+                                presetJson,
+                              ) {
+                                final preset =
+                                    jsonDecode(presetJson)
+                                        as Map<String, dynamic>;
+                                return preset['name'] !=
+                                    folders[index]; // Mantém apenas os diferentes
+                              }).toList();
+
+                              await prefs.setStringList(
+                                _presetsKey,
+                                updatedPresets,
+                              );
+                              await _loadSavedPresets(); // Atualiza savedPresets
+
+                              setState(() {
+                                folders.removeAt(index);
+
+                                // Se o preset excluído estava selecionado, limpa seleção
+                                if (_selectedPresetIndex != null &&
+                                    _selectedPresetIndex! >=
+                                        updatedPresets.length) {
+                                  _selectedPresetIndex = null;
+                                  selectedFiles = [];
+                                  isMutedList = [];
+                                  panValues = [];
+                                  volumeValues = [];
+                                  isPlaying = false;
+                                  currentPosition = Duration.zero;
+                                }
+                              });
+
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    "Pasta e preset excluídos com sucesso",
+                                  ),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
+                          },
+                          child: Stack(
+                            children: [
+                              Column(
+                                children: [
+                                  AspectRatio(
+                                    aspectRatio: 16 / 9,
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(12),
+                                      child: Image.network(
+                                        albumCovers[folders[index]] ??
+                                            'https://via.placeholder.com/600x400',
+                                        fit: BoxFit.cover,
+                                        width: double.infinity,
+                                      ),
+                                    ),
+                                  ),
+                                  SizedBox(height: 2),
+                                  Text(
+                                    folders[index],
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+
+                              // Indicadores
+                              Positioned(
+                                top: 4,
+                                right: 4,
+                                child: Column(
+                                  children: [
+                                    if (isDownloaded)
+                                      Container(
+                                        padding: EdgeInsets.all(4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.green,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Icon(
+                                          Icons.check,
+                                          size: 16,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                    SizedBox(height: 4),
+                                    if (isSelected)
+                                      Container(
+                                        padding: EdgeInsets.all(4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.blueAccent,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Icon(
+                                          Icons.music_note,
+                                          size: 16,
+                                          color: Colors.white,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),*/
                 if (savedPresets.isNotEmpty && _loadedPresets.isNotEmpty) ...[
                   Padding(
                     padding: const EdgeInsets.all(8.0),
@@ -2923,19 +3212,6 @@ class _MyAppState extends State<MyApp> {
                                   ),
                                   itemBuilder: (context, index) {
                                     final preset = _loadedPresets[index];
-                                    String rawName = preset['name'];
-
-                                    // Remove a parte do timestamp e transforma underscores em espaços
-                                    String formattedName = rawName
-                                        .split('_')
-                                        .sublist(1)
-                                        .join(' ')
-                                        .replaceAll('_', ' ');
-
-                                    print(
-                                      formattedName,
-                                    ); // Saída: A Alegria do Senhor
-
                                     final originalIndex = savedPresets
                                         .indexWhere(
                                           (p) => p['id'] == preset['id'],
@@ -3009,7 +3285,7 @@ class _MyAppState extends State<MyApp> {
                                                   ),
                                                   SizedBox(height: 4),
                                                   Text(
-                                                    formattedName,
+                                                    preset['name'],
                                                     textAlign: TextAlign.center,
                                                     style: TextStyle(
                                                       fontSize: 12,
@@ -3121,45 +3397,11 @@ class _MyAppState extends State<MyApp> {
                               start: Duration.zero,
                               duration: _maxDuration, // Use _maxDuration aqui
                               currentPosition: currentPosition,
-                              onSeek: (duration) async {
-                                // Se estiver tocando, mostre o alerta
-                                if (isPlaying) {
-                                  final shouldSeek = await showDialog<bool>(
-                                    context: context,
-                                    builder: (context) => AlertDialog(
-                                      title: Text('Reprodução em andamento'),
-                                      content: Text(
-                                        'A reprodução está em andamento. Deseja parar e mover para a nova posição?',
-                                      ),
-                                      actions: [
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.pop(context, false),
-                                          child: Text('Cancelar'),
-                                        ),
-                                        TextButton(
-                                          onPressed: () =>
-                                              Navigator.pop(context, true),
-                                          child: Text('Sim, mover'),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-
-                                  if (shouldSeek != true) {
-                                    return; // Usuário cancelou
-                                  }
-
-                                  // Pare a reprodução antes de fazer seek
-                                  await pauseAll();
-                                }
-
+                              onSeek: (duration) {
                                 userIsSeeking = true;
-                                await seekTo(duration);
-                                userIsSeeking = false;
-
-                                // Se estava tocando e o usuário confirmou, não reinicia automaticamente
-                                // O usuário precisará clicar em play novamente
+                                seekTo(duration).then((_) {
+                                  userIsSeeking = false;
+                                });
                               },
                             ),
                           );
@@ -3409,6 +3651,8 @@ class _MyAppState extends State<MyApp> {
                                   ),
                                 );
                               }
+
+                              
 
                               // Cards das tracks normais
                               final file = selectedFiles[index];
